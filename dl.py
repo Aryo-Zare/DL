@@ -7,6 +7,7 @@
     # https://labooratory-eslide.ukaachen.de/Login.php
     # e-slides  |  select ( check-mark ) all boxes  |  export data.
 metadata = pd.read_csv( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\SpectrumData.csv' )
+metadata.to_excel( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\SpectrumData.xlsx' )
 
 metadata.shape
     # Out[4]: (129, 16)
@@ -110,9 +111,59 @@ unique_folders
     #  '\\esm-data01.klinikum.rwth-aachen.de\Images\2024-02-08']
     # Length: 5, dtype: str
 
+
+# the new column 'ServerFilename' was added later below ( | rename ).
+metadata_3.columns
+    # Out[25]: 
+    # Index(['Biopsy Num', 'Body Site', 'Stain', 'Fixation', 'File Location',
+    #        'folder', 'ServerFilename'],
+    #       dtype='str')
+
 # %%%'
 
 metadata_3.to_pickle( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\metadata_3.pkl' )
+metadata_3.to_excel( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\metadata_3.xlsx' )
+
+
+metadata_3 = pd.read_pickle( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\metadata_3.pkl' )
+
+# %%% duplicates
+
+metadata_3.shape
+    # Out[11]: (109, 6)
+
+list( metadata_3.columns )
+    # Out[13]: ['Biopsy Num', 'Body Site', 'Stain', 'Fixation', 'File Location', 'folder']
+
+metadata_3['Biopsy Num'][:4]
+    # Out[14]: 
+    # 0    ZC22
+    # 1    ZC22
+    # 2    ZC29
+    # 3    ZC29
+    # Name: Biopsy Num, dtype: str
+
+unique_samples = metadata_3['Biopsy Num'].unique()
+
+unique_samples
+    # Out[15]: 
+    # <StringArray>
+    # ['ZC22', 'ZC29', 'ZC30', 'ZC36', 'ZC21', 'ZC20', 'ZC19', 'ZC17', 'ZC57',
+    #  'ZC54', 'ZC43', 'ZC41', 'ZC39', 'ZC58', 'ZC33', 'ZC34', 'ZC35', 'ZC37',
+    #  'ZC38', 'ZC40', 'ZC42', 'ZC59', 'ZC56', 'ZC53', 'ZC52', 'ZC51', 'ZC50',
+    #  'ZC49', 'ZC48', 'ZC47', 'ZC44', 'ZC14', 'ZC15', 'ZC23', 'ZC24', 'ZC25',
+    #  'ZC26', 'ZC27', 'ZC28', 'ZC31', 'ZC32', 'ZC12', 'ZC11', 'ZC10', 'ZC09',
+    #  'ZC07', 'ZC06', 'ZC05', 'ZC04', 'ZC08', 'ZC55', 'ZC68', 'ZC67', 'ZC66',
+    #  'ZC61', 'ZC60', 'ZC63', 'ZC65']
+    # Length: 58, dtype: str
+
+type(unique_samples)
+    # Out[18]: pandas.arrays.StringArray
+
+unique_samples.shape
+    # Out[19]: (58,)
+# as seen, the number of unique values, is half the length of the dataframe ( 109 ).
+    # hence, there should be a lot of duplicates.
 
 # %% directory stat
 
@@ -344,8 +395,10 @@ create_manifest_and_collect_files( root_dir , manifest_file )
 
 # %% e-slide
 
+# show a slide !
 # env_8
     # python 3.11
+    # how to slide the packages  =>  e-slide__.docx
 
 import openslide
 
@@ -438,5 +491,100 @@ plt.axis("off")
 
 plt.savefig( r'F:\OneDrive - Uniklinik RWTH Aachen\home_cage\Stellar_notocord_tse\analysis__telemetry\plot\slide\sample.pdf' )
 
-# %%'
+# %% rename
+
+# rename file-names to the zcnn style.
+    # for all folders ( files ).
+
+import os
+
+# %%%'
+
+
+# Extract just the filename from the server path
+metadata_3["ServerFilename"] = metadata_3["File Location"].apply(lambda x: os.path.basename(x))
+
+# Create a mapping: old filename → biopsy number
+rename_map = dict(
+                    zip(
+                            metadata_3["ServerFilename"], 
+                            metadata_3["Biopsy Num"]
+                        )
+)
+
+# %%% variables
+
+
+# Path to your local folder
+local_dir = r"D:\PAS_kidney_pig\extract_all__rename\2024-02-08"
+# 2022-09-29
+# 2022-09-27
+# 2022-09-22
+# 2023-03-17
+
+# %%%'
+
+# Loop through local files and rename
+for filename in os.listdir(local_dir):
+    if filename in rename_map:
+        old_path = os.path.join(local_dir, filename)
+        new_name = rename_map[filename] + ".svs"
+        new_path = os.path.join(local_dir, new_name)
+
+        print(f"Renaming: {filename}  →  {new_name}")
+        # this takes the whole path !
+            # so if part of the path before the file-name is also changed ( not here ) , then would the file be moved to another directory ?!
+        os.rename(old_path, new_path)
+    else:
+        print(f"WARNING: No match found for {filename}")
+
+
+# there ws a duplicate file within the same folder ! : ZC21_001.svs
+    # FileExistsError: [WinError 183] Cannot create a file when that file already exists: 
+    #     'D:\\PAS_kidney_pig\\extract_all__rename\\2022-09-27\\Coop. Tolber Lisa Ernst Spideregg;ZC21;;;;Kidney ;PAS;Formalin;ZC21.svs' -> 
+    #     'D:\\PAS_kidney_pig\\extract_all__rename\\2022-09-27\\ZC21.svs'
+
+# out
+    # Renaming: Ernst Spideregg PAS-001.svs  →  ZC34.svs
+    # Renaming: Ernst Spideregg PAS-002.svs  →  ZC35.svs
+    # Renaming: Ernst Spideregg PAS-003.svs  →  ZC37.svs
+    # Renaming: Ernst Spideregg PAS-004.svs  →  ZC38.svs
+    # Renaming: Ernst Spideregg PAS-005.svs  →  ZC40.svs
+    # Renaming: Ernst Spideregg PAS-006.svs  →  ZC42.svs
+    # Renaming: Ernst Spideregg PAS-007.svs  →  ZC59.svs
+    # Renaming: Ernst Spideregg PAS-008.svs  →  ZC58.svs
+    # Renaming: Ernst Spideregg PAS-009.svs  →  ZC56.svs
+    # Renaming: Ernst Spideregg PAS-010.svs  →  ZC53.svs
+    # Renaming: Ernst Spideregg PAS-011.svs  →  ZC52.svs
+    # Renaming: Ernst Spideregg PAS-012.svs  →  ZC51.svs
+    # Renaming: Ernst Spideregg PAS-013.svs  →  ZC50.svs
+    # Renaming: Ernst Spideregg PAS-014.svs  →  ZC49.svs
+    # Renaming: Ernst Spideregg PAS-015.svs  →  ZC48.svs
+    # Renaming: Ernst Spideregg PAS-016.svs  →  ZC47.svs
+    # Renaming: Ernst Spideregg PAS-017.svs  →  ZC44.svs
+    # Renaming: Ernst Spideregg PAS-018.svs  →  ZC57.svs
+    # Renaming: Ernst Spideregg PAS-019.svs  →  ZC14.svs
+    # Renaming: Ernst Spideregg PAS-020.svs  →  ZC15.svs
+    # Renaming: Ernst Spideregg PAS-021.svs  →  ZC23.svs
+    # Renaming: Ernst Spideregg PAS-022.svs  →  ZC24.svs
+    # Renaming: Ernst Spideregg PAS-023.svs  →  ZC25.svs
+    # Renaming: Ernst Spideregg PAS-024.svs  →  ZC26.svs
+    # Renaming: Ernst Spideregg PAS-025.svs  →  ZC27.svs
+    # Renaming: Ernst Spideregg PAS-026.svs  →  ZC28.svs
+    # Renaming: Ernst Spideregg PAS-027.svs  →  ZC31.svs
+    # Renaming: Ernst Spideregg PAS-028.svs  →  ZC32.svs
+    # Renaming: Ernst Spideregg PAS-029.svs  →  ZC12.svs
+    # Renaming: Ernst Spideregg PAS-030.svs  →  ZC11.svs
+    # Renaming: Ernst Spideregg PAS-031.svs  →  ZC10.svs
+    # Renaming: Ernst Spideregg PAS-032.svs  →  ZC09.svs
+    # Renaming: Ernst Spideregg PAS-033.svs  →  ZC07.svs
+    # Renaming: Ernst Spideregg PAS-034.svs  →  ZC06.svs
+    # Renaming: Ernst Spideregg PAS-035.svs  →  ZC05.svs
+    # Renaming: Ernst Spideregg PAS-036.svs  →  ZC04.svs
+    # Renaming: Ernst Spideregg PAS-037.svs  →  ZC08.svs
+    # Renaming: Ernst Spideregg PAS-038.svs  →  ZC55.svs
+    # Renaming: Ernst Spideregg PAS.svs  →  ZC33.svs
+
+# %%
+
 
