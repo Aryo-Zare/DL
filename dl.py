@@ -641,7 +641,21 @@ for f in files:
     # tokenizer_config.json
     # vocab.json
 
+# for sam-3 :
+    # .gitattributes
+    # LICENSE
+    # README.md
+    # config.json
+    # merges.txt
+    # model.safetensors
+    # processor_config.json
+    # sam3.pt
+    # special_tokens_map.json
+    # tokenizer.json
+    # tokenizer_config.json
+    # vocab.json
 
+# sam-3.1 checkpoints : this is only for videos.
 # in windows
 snapshot_download(
     repo_id="facebook/sam3.1",
@@ -657,6 +671,17 @@ snapshot_download(
 
     # Fetching 12 files: 100%|██████████| 12/12 [13:40<00:00, 68.35s/it]3:40<00:00, 11.4MB/s]   
     # Download complete: 100%|██████████| 3.51G/3.51G [13:50<00:00, 11.4MB/s]                Out[3]: 'D:\\PAS_kidney_pig\\checkpoint__sam-3.1'
+
+# %%%'
+
+# for sam-3 ( image [ & video ? ] ).
+# in windows
+snapshot_download(
+    repo_id="facebook/sam3",
+    local_dir=r'D:\PAS_kidney_pig\checkpoint__sam-3' , 
+    force_download=True
+)
+
 
 # %% os
 
@@ -703,7 +728,9 @@ for key, value in get_os_info().items():
     # Python Version        : 3.12.13
     # Python Implementation : CPython
 
-# %%'
+# %%' sam-3
+
+# %%% text-prompt
 
 import os
 import torch
@@ -713,14 +740,15 @@ from PIL import Image
 
 # 1. Import the SAM-3.1 specific libraries you discovered
 from sam3.model_builder import build_sam3_image_model
+# this is probably the text-prompt processor.
 from sam3.model.sam3_image_processor import Sam3Processor
 
-# %%%'
+# %%%%'
 
 #===================================
 #---- path
 # 2. Setup your local paths (Using raw strings 'r' for Windows backslashes)
-CHECKPOINT_PATH = r"D:\PAS_kidney_pig\checkpoint__sam-3.1\sam3.1_multiplex.pt"
+CHECKPOINT_PATH = r"D:\PAS_kidney_pig\checkpoint__sam-3\sam3.pt"
 IMAGE_PATH = r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
 
 
@@ -731,16 +759,19 @@ print("Initializing SAM-3.1 with Object Multiplex...")
 # 3. Load the model using your local checkpoint weights
 # Note: Pass the checkpoint path directly into the builder
 model = build_sam3_image_model(checkpoint_path=CHECKPOINT_PATH)
-    # loaded D:\PAS_kidney_pig\checkpoint__sam-3.1\sam3.1_multiplex.pt and found missing and/or unexpected keys:
-    # missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight', 
-    #               'backbone.vision_backbone.convs.3.conv_1x1.bias', 
-    #               'backbone.vision_backbone.convs.3.conv_3x3.weight', 
-    #               'backbone.vision_backbone.convs.3.conv_3x3.bias']
+    # Download complete: 100%|██████████| 6.90G/6.90G [23:08<00:00, 4.97MB/s]
+
+    # for sma-3.1 checkpoint :
+        # loaded D:\PAS_kidney_pig\checkpoint__sam-3.1\sam3.1_multiplex.pt and found missing and/or unexpected keys:
+        # missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight', 
+        #               'backbone.vision_backbone.convs.3.conv_1x1.bias', 
+        #               'backbone.vision_backbone.convs.3.conv_3x3.weight', 
+        #               'backbone.vision_backbone.convs.3.conv_3x3.bias']
 
 # Move model to your RTX 6000 GPU
 model.to(device="cuda")
 # output  => 
-    # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation  |  model_to_cuda__.txt
+    # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation  |  model_to_cuda_2__.txt
 
 processor = Sam3Processor(model)
 
@@ -748,7 +779,6 @@ processor = Sam3Processor(model)
 #---- input
 # 4. Load your high-resolution PAS kidney crop
 image = Image.open(IMAGE_PATH).convert("RGB")
-inference_state = processor.set_image(image)
 
 #===================================
 #---- prompt
@@ -772,6 +802,8 @@ with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
 masks = output["masks"]
 print(f"Inference complete. Found {len(masks)} candidate structures.")
     # Inference complete. Found 0 candidate structures.
+
+# ==========================================
 
 # 4. Rapid Visualization using Matplotlib
 print("Generating visualization...")
@@ -801,13 +833,330 @@ OUTPUT_PATH = "sam3_pil_result.png"
 plt.savefig(OUTPUT_PATH, bbox_inches='tight', dpi=300)
 print(f"Saved visualization to '{OUTPUT_PATH}'! Open it to check the segmentation quality.")
 
-# %%'
+# %%% geometry
+
+# from sam3.automatic_mask_generator import SAM3AutomaticMaskGenerator
+    # ModuleNotFoundError: No module named 'sam3.automatic_mask_generator'
+
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from transformers import pipeline
+
+# %%%% model
+
+IMAGE_PATH = r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
+
+print("Initializing SAM-3 Mask Generator...")
+
+# 1. The Hugging Face Pipeline (Updated for Float32)
+# We force the pipeline to use standard 32-bit float to prevent the NMS crash
+generator = pipeline(
+    "mask-generation", 
+    model="facebook/sam3", 
+    device="cuda",
+    torch_dtype=torch.float32  # <-- THE FIX
+)
+# When you use model="facebook/sam3" in transformers, the library ignores your local folder (D:\PAS_kidney_pig\...). 
+        # Instead, it securely downloads the safetensors file into a hidden cache directory on your main hard drive.
+        # On Windows, it is stored here: C:\Users\<YourUsername>\.cache\huggingface\hub
+    # Will it download every time? 
+        # No. It only downloads it the very first time. 
+        # Every time you run the script after this, it will see the file in the cache and load it instantly from your SSD into your GPU. 
+        # You are not out of control—it is just acting as a smart package manager!
+
+
+# 2. Load Image
+image_pil = Image.open(IMAGE_PATH).convert("RGB")
+
+print("Generating masks... Dropping search points across the WSI.")
+
+
+# %%%% Inference
+
+
+print("Generating masks... Running 'Max Signal' aggressive search.")
+
+# 3. Inference with MAX SIGNAL Parameters
+results = generator(
+    image_pil, 
+    points_per_batch=128,         
+    points_per_side=128,          # 128 * 128 = 16,384 search points
+    
+    # --- THE AGGRESSIVE THRESHOLDS ---
+    pred_iou_thresh=0.60,         # Dropped from 0.75. Accepts very fuzzy borders.
+    stability_score_thresh=0.65,  # Dropped from 0.80. Accepts highly unstable masks.
+    
+    # --- THE MAGNIFYING GLASS ---
+    crop_n_layers=1,              # Slices the image into smaller overlapping tiles for deep focus
+    crop_nms_thresh=0.85,         # Allows massive overlap between masks before deleting them
+    crop_overlap_ratio=512 / 1500 # Ensures the AI doesn't cut a tubule in half when tiling
+)
+
+masks = results["masks"]
+print(f"Max Signal Inference complete. Found {len(masks)} total raw structures before filtering.")
+    # Max Signal Inference complete. Found 395 total raw structures before filtering.
+
+# %%%% duplicate removal
+
+# cell 139
+# Intersection over Union ( IoU ) Filter.
+# for filtering overlaps ( duplicates )
+def calculate_iou(mask1, mask2):
+    """Calculates the Intersection over Union (overlap percentage) between two boolean masks."""
+    intersection = np.logical_and(mask1, mask2).sum()
+    if intersection == 0:
+        return 0.0
+    union = np.logical_or(mask1, mask2).sum()
+    return intersection / union
+
+# %%%% FILTERING & VISUALIZATION
+
+# ==========================================
+# 4. ADVANCED FILTERING & VISUALIZATION
+# ==========================================
+import time
+print("Filtering noise and duplicates...")
+start_time = time.time()
+
+#==============================
+#---- filtering parameters
+
+# filtering small cells-nuclei , ... .
+MIN_PIXEL_AREA = 5000 
+
+# filtering overlaps ( duplicates ).
+MAX_OVERLAP_IOU = 0.50 # If 2 masks overlap by more than 50%, delete one
+
+#==============================
+# --- Phase 1: Format and Size Filter ---
+# We store the surviving masks in a new list so we can compare them
+valid_masks = []
+for mask in masks:
+    if isinstance(mask, torch.Tensor):
+        mask_bool = mask.cpu().numpy().astype(bool)
+    else:
+        mask_bool = np.array(mask).astype(bool)
+        
+    mask_bool = np.squeeze(mask_bool)
+    
+    # Area Filter
+    if np.sum(mask_bool) >= MIN_PIXEL_AREA:
+        valid_masks.append(mask_bool)
+
+#==============================
+# --- Phase 2: Duplicate Overlap Filter (Custom NMS) ---
+# We sort masks by size (largest first). 
+# We assume the larger mask is the "better/fuller" version of the tubule.
+valid_masks.sort(key=np.sum, reverse=True)
+
+final_unique_masks = []
+
+for current_mask in valid_masks:
+    is_duplicate = False
+    
+    # Compare against masks we've already approved
+    for approved_mask in final_unique_masks:
+        iou = calculate_iou(current_mask, approved_mask)
+        
+        if iou > MAX_OVERLAP_IOU:
+            is_duplicate = True
+            break # Stop checking, it's a duplicate!
+            
+    if not is_duplicate:
+        final_unique_masks.append(current_mask)
+
+#==============================
+# --- Phase 3: Fast Pixel Blending ---
+final_image = np.array(image_pil).copy()
+alpha = 0.5
+
+for mask_bool in final_unique_masks:
+    color = np.random.randint(0, 255, (3,), dtype=np.uint8)
+    final_image[mask_bool] = (final_image[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
+
+OUTPUT_PATH = "sam3_max_signal_filtered.png"
+Image.fromarray(final_image).save(OUTPUT_PATH)
+end_time = time.time()
+
+print(f"Raw masks generated: {len(masks)}")
+print(f"Surviving size filter (> {MIN_PIXEL_AREA} px): {len(valid_masks)}")
+print(f"Final UNIQUE structures: {len(final_unique_masks)}")
+print(f"Image processed in {end_time - start_time:.3f} seconds!")
+print(f"Saved clean visualization to '{OUTPUT_PATH}'")
+
+# Filtering noise and duplicates...
+# Raw masks generated: 395
+# Surviving size filter (> 5000 px): 44
+# Final UNIQUE structures: 26
+# Image processed in 1.036 seconds!
+# Saved clean visualization to 'sam3_max_signal_filtered.png'
+
+
+# %%%% save
+
+# 4. SAVE INSTANTLY
+OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_5000_3_.png"
+
+# Convert the blended array back to a PIL Image and save
+Image.fromarray(final_image).save(OUTPUT_PATH)
+
+
+# test_segment_mpa_5000_2_.png  : higer signal
+    # Original masks: 395
+    # Surviving large structures: 44
 
 # %%'
 
 # %%'
 
-# %%'
+# %% prev
+
+# %%%% Inference
+
+# 3. Inference (
+# No Autocast needed
+# with Histology-Tuned Parameters
+# Since we forced float32 above, we just call the generator directly
+results = generator(
+    image_pil, 
+    
+    # The AI drops its 16,384 points and finds everything
+    points_per_batch=128,         # Speed up processing on your RTX 6000
+    
+    points_per_side=128,          # Drops a massive 128x128 grid (16,384 search points!)
+    pred_iou_thresh=0.75,         # Default is 0.88. We lower this to accept 'fuzzier' borders
+    stability_score_thresh=0.80,  # Default is 0.95. We lower this to stop it from deleting the glomerulus
+    crop_n_layers=1,              # Forces the AI to look at both the macro and micro scale
+    crop_nms_thresh=0.7,          # Allows masks to overlap slightly more before deleting them
+)
+
+masks = results["masks"]
+print(f"Inference complete. Found {len(masks)} distinct geometric structures.")
+    # Found 18 distinct geometric structures.
+    # Inference complete. Found 218 distinct geometric structures.
+    
+
+# %%%% matplotlib
+
+# # ==========================================
+# # 4. VISUALIZATION WITH AREA FILTERING
+# # ==========================================
+# print("Filtering noise and generating visualization...")
+# plt.figure(figsize=(10, 10))
+# plt.imshow(image_pil)
+
+# # --- THE NOISE FILTER ---
+# # Any mask with fewer pixels than this number will be deleted.
+# # (You may need to tweak this number! Try 500, 1000, or 2000)
+# MIN_PIXEL_AREA = 4000 
+
+# filtered_count = 0
+
+# for mask in masks:
+#     # 1. Convert to boolean numpy array
+#     if isinstance(mask, torch.Tensor):
+#         mask_bool = mask.cpu().numpy().astype(bool)
+#     else:
+#         mask_bool = np.array(mask).astype(bool)
+        
+#     mask_bool = np.squeeze(mask_bool)
+    
+#     # 2. CALCULATE THE AREA (Summing all the 'True' pixels)
+#     mask_area = np.sum(mask_bool)
+    
+#     # 3. APPLY THE FILTER
+#     if mask_area < MIN_PIXEL_AREA:
+#         continue # Skip this mask entirely! It is just noise/nuclei.
+    
+#     filtered_count += 1
+    
+#     # 4. Draw the surviving masks
+#     color = np.concatenate([np.random.random(3), [0.5]]) 
+#     mask_image = np.zeros((mask_bool.shape[0], mask_bool.shape[1], 4))
+#     mask_image[mask_bool] = color
+#     plt.imshow(mask_image)
+
+# plt.axis('off')
+
+# %%%% matplotlib
+
+# save the figure
+
+# OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_4000__.png"
+# plt.savefig(OUTPUT_PATH, bbox_inches='tight' , dpi=300)  
+
+# OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_4000__.pdf"
+# plt.savefig(OUTPUT_PATH, bbox_inches='tight')  # , dpi=300
+
+
+# %%%% VISUALIZATION
+
+# Thank you! Data science is often 10% AI and 90% clever filtering. I'm thrilled the signal-to-noise ratio is shifting in your favor!
+
+
+# ==========================================
+# 4. LIGHTNING-FAST VISUALIZATION (NumPy + PIL)
+# ==========================================
+# import time # Just so we can measure the speed!
+print("Filtering noise and generating visualization...")
+# start_time = time.time()
+
+# Convert your original PIL image to a mutable NumPy array
+final_image = np.array(image_pil).copy()
+alpha = 0.5 # 50% opacity
+
+# either 4000 or 5000 is good.
+MIN_PIXEL_AREA = 5000 
+filtered_count = 0
+
+for mask in masks:
+    # 1. Convert to boolean numpy array
+    if isinstance(mask, torch.Tensor):
+        mask_bool = mask.cpu().numpy().astype(bool)
+    else:
+        mask_bool = np.array(mask).astype(bool)
+        
+    mask_bool = np.squeeze(mask_bool)
+    
+    # 2. CALCULATE AREA & FILTER
+    if np.sum(mask_bool) < MIN_PIXEL_AREA:
+        continue 
+    
+    filtered_count += 1
+    
+    # 3. FAST PIXEL BLENDING
+    # Generate a random RGB color (0-255)
+    color = np.random.randint(0, 255, (3,), dtype=np.uint8)
+    
+    # Apply the color directly to the pixels where the mask is True
+    final_image[mask_bool] = (final_image[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
+
+# end_time = time.time()
+
+print(f"Original masks: {len(masks)}")
+print(f"Surviving large structures: {filtered_count}")
+# print(f"Image processed and saved in {end_time - start_time:.3f} seconds!")
+# print(f"Saved clean visualization to '{OUTPUT_PATH}'")
+
+# %%% duplicates ( overlap )
+
+
+    # Original masks: 218
+    # Surviving large structures: 25
+    # Image processed and saved in 0.366 seconds!
+
+
+# noise filter threshold : 5000
+    # increase s/n :
+        # Original masks: 395
+        # Surviving large structures: 44
+    
+    # conventional inference ( prev ).
+        # Original masks: 218
+        # Surviving large structures: 25
+
 
 # %%'
 
