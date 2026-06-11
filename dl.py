@@ -1,4 +1,5 @@
 
+# env_8 ( DELL-18 ) : more info below
 
 
 # %% metadata
@@ -396,7 +397,7 @@ create_manifest_and_collect_files( root_dir , manifest_file )
 # %% e-slide
 
 # show a slide !
-# env_8
+# env_8 ( DELL-18 )
     # python 3.11
     # how to slide the packages  =>  e-slide__.docx
 
@@ -585,6 +586,228 @@ for filename in os.listdir(local_dir):
     # Renaming: Ernst Spideregg PAS-038.svs  →  ZC55.svs
     # Renaming: Ernst Spideregg PAS.svs  →  ZC33.svs
 
-# %%
+# %% SAM-3
 
+# env_6
+
+from sam3.model_builder import build_sam3_image_model
+    # C:\Users\User\miniconda3\envs\env_6\Lib\site-packages\tqdm\auto.py:21: 
+        # TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. 
+        # See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+        #   from .autonotebook import tqdm as notebook_tqdm    
+    # C:\Users\User\miniconda3\envs\env_6\Lib\site-packages\timm\models\layers\__init__.py:49: 
+        # FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+        #   warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+
+from sam3.model.sam3_image_processor import Sam3Processor
+
+import torch
+
+torch.cuda.is_available()
+    # Out[9]: True
+
+# %% Hugging-face
+
+# %%% uninstall xet
+
+# in conda terminal : env_6 :
+pip uninstall hf-xet
+
+# verify
+pip show hf-xet
+    
+
+# %%%'
+
+# env_6
+from huggingface_hub import list_repo_files , snapshot_download
+
+
+files = list_repo_files("facebook/sam3.1")
+
+for f in files:
+    print(f)
+
+    # .gitattributes
+    # LICENSE
+    # README.md
+    # assets/sam3.1_diagram.png
+    # config.json
+    # merges.txt
+    # processor_config.json
+    # sam3.1_multiplex.pt
+    # special_tokens_map.json
+    # tokenizer.json
+    # tokenizer_config.json
+    # vocab.json
+
+
+# in windows
+snapshot_download(
+    repo_id="facebook/sam3.1",
+    local_dir=r'D:\PAS_kidney_pig\checkpoint__sam-3.1' , # r"C:\model",   #  D:\PAS_kidney_pig\checkpoint_11
+    force_download=True
+)
+
+    # Downloading (incomplete total...): 100%|██████████| 2.00k/2.00k [00:00<00:00, 4.98kB/s]
+    
+    # Xet Storage is enabled for this repo, but the 'hf_xet' package is not installed. 
+    # Falling back to regular HTTP download. 
+    # For better performance, install the package with: `pip install huggingface_hub[hf_xet]` or `pip install hf_xet`
+
+    # Fetching 12 files: 100%|██████████| 12/12 [13:40<00:00, 68.35s/it]3:40<00:00, 11.4MB/s]   
+    # Download complete: 100%|██████████| 3.51G/3.51G [13:50<00:00, 11.4MB/s]                Out[3]: 'D:\\PAS_kidney_pig\\checkpoint__sam-3.1'
+
+# %% os
+
+import platform
+import os
+import sys
+
+def get_os_info():
+    info = {
+        "Platform": platform.platform(),
+        "Architecture": platform.architecture()[0],
+        "Machine": platform.machine(),
+        "Processor": platform.processor(),
+        "Hostname": platform.node(),
+        "Python Version": platform.python_version(),
+        "Python Implementation": platform.python_implementation(),
+    }
+    
+    # Add more detailed info on Unix-like systems
+    if os.name == 'posix':
+        uname = os.uname()
+        info["Uname"] = {
+            "sysname": uname.sysname,
+            "nodename": uname.nodename,
+            "release": uname.release,
+            "version": uname.version,
+            "machine": uname.machine
+        }
+    
+    return info
+
+# Print nicely
+for key, value in get_os_info().items():
+    print(f"{key:22}: {value}")
+
+
+#======================================================================================
+
+    # Platform              : Windows-11-10.0.26200-SP0
+    # Architecture          : 64bit
+    # Machine               : AMD64
+    # Processor             : Intel64 Family 6 Model 198 Stepping 2, GenuineIntel
+    # Hostname              : UK-2025720264
+    # Python Version        : 3.12.13
+    # Python Implementation : CPython
+
+# %%'
+
+import os
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+
+# 1. Import the SAM-3.1 specific libraries you discovered
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
+
+# %%%'
+
+#===================================
+#---- path
+# 2. Setup your local paths (Using raw strings 'r' for Windows backslashes)
+CHECKPOINT_PATH = r"D:\PAS_kidney_pig\checkpoint__sam-3.1\sam3.1_multiplex.pt"
+IMAGE_PATH = r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
+
+
+#===================================
+#---- model
+print("Initializing SAM-3.1 with Object Multiplex...")
+
+# 3. Load the model using your local checkpoint weights
+# Note: Pass the checkpoint path directly into the builder
+model = build_sam3_image_model(checkpoint_path=CHECKPOINT_PATH)
+    # loaded D:\PAS_kidney_pig\checkpoint__sam-3.1\sam3.1_multiplex.pt and found missing and/or unexpected keys:
+    # missing_keys=['backbone.vision_backbone.convs.3.conv_1x1.weight', 
+    #               'backbone.vision_backbone.convs.3.conv_1x1.bias', 
+    #               'backbone.vision_backbone.convs.3.conv_3x3.weight', 
+    #               'backbone.vision_backbone.convs.3.conv_3x3.bias']
+
+# Move model to your RTX 6000 GPU
+model.to(device="cuda")
+# output  => 
+    # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation  |  model_to_cuda__.txt
+
+processor = Sam3Processor(model)
+
+#===================================
+#---- input
+# 4. Load your high-resolution PAS kidney crop
+image = Image.open(IMAGE_PATH).convert("RGB")
+inference_state = processor.set_image(image)
+
+#===================================
+#---- prompt
+# 5. Define your target text prompt
+# Let's start with "tubule" to target the circular structures
+TEXT_PROMPT = "glomerulus" 
+print(f"Prompting SAM-3.1 with text: '{TEXT_PROMPT}'...")
+
+# ==========================================
+# 3. THE FIX: PYTORCH AUTOCAST
+# We tell the GPU to handle the BFloat16 conversion automatically
+# ==========================================
+with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    
+    # Process the image and prompt the model inside this "safe zone"
+    inference_state = processor.set_image(image)
+    output = processor.set_text_prompt(state=inference_state, prompt=TEXT_PROMPT)
+
+# ==========================================
+
+masks = output["masks"]
+print(f"Inference complete. Found {len(masks)} candidate structures.")
+    # Inference complete. Found 0 candidate structures.
+
+# 4. Rapid Visualization using Matplotlib
+print("Generating visualization...")
+plt.figure(figsize=(10, 10))
+plt.imshow(image)
+
+# Overlay masks dynamically
+for mask in masks:
+    # Convert PyTorch tensor to NumPy boolean array
+    if isinstance(mask, torch.Tensor):
+        mask_np = mask.cpu().numpy().astype(bool)
+    else:
+        mask_np = mask.astype(bool)
+        
+    mask_np = np.squeeze(mask_np) # Flatten extra dimensions
+    
+    # Create a random color with 50% opacity
+    color = np.concatenate([np.random.random(3), [0.5]]) 
+    
+    # Apply color to the mask area
+    mask_image = np.zeros((mask_np.shape[0], mask_np.shape[1], 4))
+    mask_image[mask_np] = color
+    plt.imshow(mask_image)
+
+plt.axis('off')
+OUTPUT_PATH = "sam3_pil_result.png"
+plt.savefig(OUTPUT_PATH, bbox_inches='tight', dpi=300)
+print(f"Saved visualization to '{OUTPUT_PATH}'! Open it to check the segmentation quality.")
+
+# %%'
+
+# %%'
+
+# %%'
+
+# %%'
+
+# %%'
 
