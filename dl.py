@@ -1,5 +1,5 @@
 
-# env_8 ( DELL-18 ) : more info below
+# env_6 ( DELL-18 ) : more info below
 
 
 # %% metadata
@@ -394,6 +394,124 @@ manifest_file = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\file_manifest.txt"
 
 create_manifest_and_collect_files( root_dir , manifest_file )
 
+# %% pool
+
+# copy all .svs files in 1 folder.
+    # renaming the duplicates with a numbered suffix.
+
+import os
+import shutil
+
+# %%%'
+
+# Source root containing the 4 date-folders
+src_root = r"D:\PAS_kidney_pig\extract_all__rename"
+
+# Destination pool folder
+dst_root = r"D:\PAS_kidney_pig\pool"
+os.makedirs(dst_root, exist_ok=True)
+
+# Dictionary to count occurrences of each base filename
+name_count = {}
+
+for root, dirs, files in os.walk(src_root):
+    for f in files:
+        if f.lower().endswith(".svs"):
+            src_path = os.path.join(root, f)
+
+            base = os.path.splitext(f)[0]   # e.g. "zc17"
+            ext  = os.path.splitext(f)[1]   # ".svs"
+
+            # Count duplicates
+            if base not in name_count:
+                name_count[base] = 1
+            else:
+                name_count[base] += 1
+
+            # Build new filename with suffix
+            new_name = f"{base}_{name_count[base]}{ext}"
+            dst_path = os.path.join(dst_root, new_name)
+
+            print(f"Copying: {src_path}  -->  {dst_path}")
+            shutil.copy2(src_path, dst_path)
+
+print("Done. All .svs files pooled with numbered suffixes.")
+
+
+# %%% out
+
+    # Copying: D:\PAS_kidney_pig\extract_all__rename\2024-02-08\ZC66.svs  -->  D:\PAS_kidney_pig\pool\ZC66_1.svs
+    # Copying: D:\PAS_kidney_pig\extract_all__rename\2024-02-08\ZC67.svs  -->  D:\PAS_kidney_pig\pool\ZC67_1.svs
+    # Copying: D:\PAS_kidney_pig\extract_all__rename\2024-02-08\ZC68.svs  -->  D:\PAS_kidney_pig\pool\ZC68_1.svs
+    # ...
+
+name_count
+    # Out[3]: 
+    # {'ZC17': 1,
+    #  'ZC19': 1,
+    #  'ZC20': 1,
+    #  ...
+
+# %%% count
+
+# Count how many filenames have each occurrence number
+
+from collections import Counter
+
+freq = Counter(name_count.values())
+
+freq
+    # Out[10]: Counter({2: 38, 1: 21})
+
+#=========================================
+
+# count the Total number of .svs files.
+
+import os
+
+folder = r"D:\PAS_kidney_pig\pool"
+
+svs_files = [
+    f for f in os.listdir(folder)
+    if f.lower().endswith(".svs")
+]
+
+len(svs_files)
+    # 96
+
+
+# %%% save the dictionary
+
+# save the dictionary : name_count
+
+import pickle
+import os
+
+save_path = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\files\name_count.pkl"
+
+# Ensure directory exists
+os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+with open(save_path, "wb") as f:
+    pickle.dump(name_count, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+print("Saved name_count dictionary to:", save_path)
+
+
+#=====================================
+
+# open
+
+import pickle
+
+load_path = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\files\name_count.pkl"
+
+with open(load_path, "rb") as f:
+    name_count_loaded = pickle.load(f)
+
+print(name_count_loaded)
+
+
 # %% e-slide
 
 # show a slide !
@@ -749,7 +867,7 @@ from sam3.model.sam3_image_processor import Sam3Processor
 #---- path
 # 2. Setup your local paths (Using raw strings 'r' for Windows backslashes)
 CHECKPOINT_PATH = r"D:\PAS_kidney_pig\checkpoint__sam-3\sam3.pt"
-IMAGE_PATH = r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
+IMAGE_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\test__zc_19_2__cropped.png"
 
 
 #===================================
@@ -843,15 +961,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 from transformers import pipeline
+import time
 
 # %%%% model
 
-IMAGE_PATH = r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
+# ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\test__zc_19_2__cropped.png'
+# ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\saturation\test__zc_19_2__sat_3_.png'
+# ENHANCED_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\test__zc_19_2__enhanced_a_1.5_.png'
+
+# ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\zc09__cropped.png'
+# ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\zc09_2_cropped.png'
+# ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\zc09_3_cropped.png'
+ORIGINAL_IMAGE_PATH = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\zc68_cropped.png'
+
+
+# peviosus path  :   r"D:\PAS_kidney_pig\test\test__zc_19_2__cropped.png"
 
 print("Initializing SAM-3 Mask Generator...")
 
 # 1. The Hugging Face Pipeline (Updated for Float32)
-# We force the pipeline to use standard 32-bit float to prevent the NMS crash
+# We force the pipeline to use standard 32-bit float to prevent the NMS crash.
+# loading the 3.5 GB SAM-3 model into your RTX 6000's memory in Inference Mode (Read-Only , frozen weights).
+# you only need to run it once on each session.
+    # you dod not need to run it everytime you tweak a parameter in the next cell, like in Scikit-learn.
+    # AI__dl_.docx  |  cell-130
 generator = pipeline(
     "mask-generation", 
     model="facebook/sam3", 
@@ -866,9 +999,15 @@ generator = pipeline(
         # Every time you run the script after this, it will see the file in the cache and load it instantly from your SSD into your GPU. 
         # You are not out of control—it is just acting as a smart package manager!
 
+# out : running for the 2nd time :
+    # Initializing SAM-3 Mask Generator...
+    # Loading weights: 100%|██████████| 685/685 [00:00<00:00, 11959.08it/s]
+    # Generating masks... Dropping search points across the WSI.
+
 
 # 2. Load Image
-image_pil = Image.open(IMAGE_PATH).convert("RGB")
+original_image_pil = Image.open(ORIGINAL_IMAGE_PATH).convert("RGB")
+# enhanced_image_pil = Image.open(ENHANCED_IMAGE_PATH).convert("RGB")
 
 print("Generating masks... Dropping search points across the WSI.")
 
@@ -878,18 +1017,24 @@ print("Generating masks... Dropping search points across the WSI.")
 
 print("Generating masks... Running 'Max Signal' aggressive search.")
 
-# 3. Inference with MAX SIGNAL Parameters
+# 3. Inference with MAX SIGNAL Parameters.
+# you need to run this everytime you load a new file ! : the new file is an input here !
 results = generator(
-    image_pil, 
+    # original_image_pil : instead of the original image, this can be a pre-processed image ( enhanced_image_pil ) :
+        # to enhanace borders ... .
+        # however, the image dimensions should remain intact.
+    original_image_pil,
+    # enhanced_image_pil , #  original_image_pil, 
+    
     points_per_batch=128,         
     points_per_side=128,          # 128 * 128 = 16,384 search points
     
     # --- THE AGGRESSIVE THRESHOLDS ---
-    pred_iou_thresh=0.60,         # Dropped from 0.75. Accepts very fuzzy borders.
-    stability_score_thresh=0.65,  # Dropped from 0.80. Accepts highly unstable masks.
+    pred_iou_thresh=0.6,         # Dropped from 0.75 , 0.60. Accepts very fuzzy borders.
+    stability_score_thresh=0.65,  # Dropped from 0.80 , 0.65. Accepts highly unstable masks.
     
     # --- THE MAGNIFYING GLASS ---
-    crop_n_layers=1,              # Slices the image into smaller overlapping tiles for deep focus
+    crop_n_layers=0,              # Slices the image into smaller overlapping tiles for deep focus
     crop_nms_thresh=0.85,         # Allows massive overlap between masks before deleting them
     crop_overlap_ratio=512 / 1500 # Ensures the AI doesn't cut a tubule in half when tiling
 )
@@ -916,7 +1061,7 @@ def calculate_iou(mask1, mask2):
 # ==========================================
 # 4. ADVANCED FILTERING & VISUALIZATION
 # ==========================================
-import time
+# import time
 print("Filtering noise and duplicates...")
 start_time = time.time()
 
@@ -927,9 +1072,11 @@ start_time = time.time()
 MIN_PIXEL_AREA = 5000 
 
 # filtering overlaps ( duplicates ).
-MAX_OVERLAP_IOU = 0.50 # If 2 masks overlap by more than 50%, delete one
+# initially : 0.5
+    # If 2 masks overlap by more than 50%, delete one
+MAX_OVERLAP_IOU = 0.20
 
-#==============================
+#===========================================================
 # --- Phase 1: Format and Size Filter ---
 # We store the surviving masks in a new list so we can compare them
 valid_masks = []
@@ -945,7 +1092,7 @@ for mask in masks:
     if np.sum(mask_bool) >= MIN_PIXEL_AREA:
         valid_masks.append(mask_bool)
 
-#==============================
+#===========================================================
 # --- Phase 2: Duplicate Overlap Filter (Custom NMS) ---
 # We sort masks by size (largest first). 
 # We assume the larger mask is the "better/fuller" version of the tubule.
@@ -967,37 +1114,110 @@ for current_mask in valid_masks:
     if not is_duplicate:
         final_unique_masks.append(current_mask)
 
-#==============================
+#===========================================================
 # --- Phase 3: Fast Pixel Blending ---
-final_image = np.array(image_pil).copy()
+# original_image_pil : this should be the original ( not-pre-processed image ).
+final_image = np.array(original_image_pil).copy()
 alpha = 0.5
 
+
+#====
+# Before plotting, check the size of the mask
 for mask_bool in final_unique_masks:
+    mask_area = np.sum(mask_bool)
+    image_area = mask_bool.shape[0] * mask_bool.shape[1]
+    
+    # If the mask covers more than 30% of the WSI crop, it's a background artifact. Skip it!
+        # i.e. the whole image is masked as 1 segment !
+    if mask_area > (image_area * 0.30):
+        continue  # if executed, this skips the code below, & returns back to the beginnig of the loop.
+        
     color = np.random.randint(0, 255, (3,), dtype=np.uint8)
     final_image[mask_bool] = (final_image[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
 
-OUTPUT_PATH = "sam3_max_signal_filtered.png"
-Image.fromarray(final_image).save(OUTPUT_PATH)
+
+#==============================================================
 end_time = time.time()
 
 print(f"Raw masks generated: {len(masks)}")
 print(f"Surviving size filter (> {MIN_PIXEL_AREA} px): {len(valid_masks)}")
 print(f"Final UNIQUE structures: {len(final_unique_masks)}")
 print(f"Image processed in {end_time - start_time:.3f} seconds!")
-print(f"Saved clean visualization to '{OUTPUT_PATH}'")
 
-# Filtering noise and duplicates...
-# Raw masks generated: 395
-# Surviving size filter (> 5000 px): 44
-# Final UNIQUE structures: 26
-# Image processed in 1.036 seconds!
-# Saved clean visualization to 'sam3_max_signal_filtered.png'
 
+# note : after an independent 2nd-time running, exactly the same numbers were output :
+# crop_n_layers = 0 or 1 : this makes no difference !
+    # Filtering noise and duplicates...
+    # Raw masks generated: 395
+    # Surviving size filter (> 5000 px): 44
+    # Final UNIQUE structures: 26
+    # Image processed in 1.036 seconds!
+
+# using the enhanced image.
+        # this was tested both with : crop_n_layers = 1 & 3 .
+    # Raw masks generated: 309
+    # Surviving size filter (> 5000 px): 36
+    # Final UNIQUE structures: 21
+    # Image processed in 0.729 seconds!
+
+# crop_n_layers = 2
+    # Raw masks generated: 395
+    # Surviving size filter (> 5000 px): 44
+    # Final UNIQUE structures: 26
+    # Image processed in 0.927 seconds!
+
+# crop_n_layers = 3
+    # Raw masks generated: 395
+    # Surviving size filter (> 5000 px): 44
+    # Final UNIQUE structures: 26
+    # Image processed in 0.907 seconds!
+
+
+    # Raw masks generated: 370
+    # Surviving size filter (> 5000 px): 45
+    # Final UNIQUE structures: 30
+    # Image processed in 1.003 seconds!
+
+
+# pred_iou_thresh=0.5,        
+# stability_score_thresh=0.5,
+    # Filtering noise and duplicates...
+    # Raw masks generated: 490
+    # Surviving size filter (> 5000 px): 56
+    # Final UNIQUE structures: 31
+    # Image processed in 1.229 seconds!
+
+
+# pred_iou_thresh=0.3,        
+# stability_score_thresh=0.3,
+    # Filtering noise and duplicates...
+    # Raw masks generated: 675
+    # Surviving size filter (> 5000 px): 88
+    # Final UNIQUE structures: 51
+    # Image processed in 2.507 seconds!
+
+
+# MAX_OVERLAP_IOU = 0.20
+# pred_iou_thresh=0.3,        
+# stability_score_thresh=0.3,
+    # Filtering noise and duplicates...
+    # Raw masks generated: 660
+    # Surviving size filter (> 5000 px): 86
+    # Final UNIQUE structures: 38
+    # Image processed in 1.905 seconds!
+
+# zc09  ,  iou : 0.5
+    # Filtering noise and duplicates...
+    # Raw masks generated: 155
+    # Surviving size filter (> 5000 px): 94
+    # Final UNIQUE structures: 47
+    # Image processed in 2.050 seconds!
 
 # %%%% save
 
 # 4. SAVE INSTANTLY
-OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_5000_3_.png"
+# OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_7_.png"
+OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\zc09\zc68_segment_.png"
 
 # Convert the blended array back to a PIL Image and save
 Image.fromarray(final_image).save(OUTPUT_PATH)
@@ -1009,154 +1229,4 @@ Image.fromarray(final_image).save(OUTPUT_PATH)
 
 # %%'
 
-# %%'
-
-# %% prev
-
-# %%%% Inference
-
-# 3. Inference (
-# No Autocast needed
-# with Histology-Tuned Parameters
-# Since we forced float32 above, we just call the generator directly
-results = generator(
-    image_pil, 
-    
-    # The AI drops its 16,384 points and finds everything
-    points_per_batch=128,         # Speed up processing on your RTX 6000
-    
-    points_per_side=128,          # Drops a massive 128x128 grid (16,384 search points!)
-    pred_iou_thresh=0.75,         # Default is 0.88. We lower this to accept 'fuzzier' borders
-    stability_score_thresh=0.80,  # Default is 0.95. We lower this to stop it from deleting the glomerulus
-    crop_n_layers=1,              # Forces the AI to look at both the macro and micro scale
-    crop_nms_thresh=0.7,          # Allows masks to overlap slightly more before deleting them
-)
-
-masks = results["masks"]
-print(f"Inference complete. Found {len(masks)} distinct geometric structures.")
-    # Found 18 distinct geometric structures.
-    # Inference complete. Found 218 distinct geometric structures.
-    
-
-# %%%% matplotlib
-
-# # ==========================================
-# # 4. VISUALIZATION WITH AREA FILTERING
-# # ==========================================
-# print("Filtering noise and generating visualization...")
-# plt.figure(figsize=(10, 10))
-# plt.imshow(image_pil)
-
-# # --- THE NOISE FILTER ---
-# # Any mask with fewer pixels than this number will be deleted.
-# # (You may need to tweak this number! Try 500, 1000, or 2000)
-# MIN_PIXEL_AREA = 4000 
-
-# filtered_count = 0
-
-# for mask in masks:
-#     # 1. Convert to boolean numpy array
-#     if isinstance(mask, torch.Tensor):
-#         mask_bool = mask.cpu().numpy().astype(bool)
-#     else:
-#         mask_bool = np.array(mask).astype(bool)
-        
-#     mask_bool = np.squeeze(mask_bool)
-    
-#     # 2. CALCULATE THE AREA (Summing all the 'True' pixels)
-#     mask_area = np.sum(mask_bool)
-    
-#     # 3. APPLY THE FILTER
-#     if mask_area < MIN_PIXEL_AREA:
-#         continue # Skip this mask entirely! It is just noise/nuclei.
-    
-#     filtered_count += 1
-    
-#     # 4. Draw the surviving masks
-#     color = np.concatenate([np.random.random(3), [0.5]]) 
-#     mask_image = np.zeros((mask_bool.shape[0], mask_bool.shape[1], 4))
-#     mask_image[mask_bool] = color
-#     plt.imshow(mask_image)
-
-# plt.axis('off')
-
-# %%%% matplotlib
-
-# save the figure
-
-# OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_4000__.png"
-# plt.savefig(OUTPUT_PATH, bbox_inches='tight' , dpi=300)  
-
-# OUTPUT_PATH = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\test_segment\geometric\test_segment_mpa_4000__.pdf"
-# plt.savefig(OUTPUT_PATH, bbox_inches='tight')  # , dpi=300
-
-
-# %%%% VISUALIZATION
-
-# Thank you! Data science is often 10% AI and 90% clever filtering. I'm thrilled the signal-to-noise ratio is shifting in your favor!
-
-
-# ==========================================
-# 4. LIGHTNING-FAST VISUALIZATION (NumPy + PIL)
-# ==========================================
-# import time # Just so we can measure the speed!
-print("Filtering noise and generating visualization...")
-# start_time = time.time()
-
-# Convert your original PIL image to a mutable NumPy array
-final_image = np.array(image_pil).copy()
-alpha = 0.5 # 50% opacity
-
-# either 4000 or 5000 is good.
-MIN_PIXEL_AREA = 5000 
-filtered_count = 0
-
-for mask in masks:
-    # 1. Convert to boolean numpy array
-    if isinstance(mask, torch.Tensor):
-        mask_bool = mask.cpu().numpy().astype(bool)
-    else:
-        mask_bool = np.array(mask).astype(bool)
-        
-    mask_bool = np.squeeze(mask_bool)
-    
-    # 2. CALCULATE AREA & FILTER
-    if np.sum(mask_bool) < MIN_PIXEL_AREA:
-        continue 
-    
-    filtered_count += 1
-    
-    # 3. FAST PIXEL BLENDING
-    # Generate a random RGB color (0-255)
-    color = np.random.randint(0, 255, (3,), dtype=np.uint8)
-    
-    # Apply the color directly to the pixels where the mask is True
-    final_image[mask_bool] = (final_image[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
-
-# end_time = time.time()
-
-print(f"Original masks: {len(masks)}")
-print(f"Surviving large structures: {filtered_count}")
-# print(f"Image processed and saved in {end_time - start_time:.3f} seconds!")
-# print(f"Saved clean visualization to '{OUTPUT_PATH}'")
-
-# %%% duplicates ( overlap )
-
-
-    # Original masks: 218
-    # Surviving large structures: 25
-    # Image processed and saved in 0.366 seconds!
-
-
-# noise filter threshold : 5000
-    # increase s/n :
-        # Original masks: 395
-        # Surviving large structures: 44
-    
-    # conventional inference ( prev ).
-        # Original masks: 218
-        # Surviving large structures: 25
-
-
-# %%'
 
