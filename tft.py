@@ -8,7 +8,11 @@
 # %%'
 
 import os
+import sys
 import time
+import datetime
+import logging
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
@@ -22,15 +26,13 @@ from transformers import pipeline
 # Explicitly turn off IPython's interactive mode
 plt.ioff()
 
-# run this after you finish executing the program, to revert to interactive mode.
-# plt.ion()
-# ==============================
-
 # =====================================================================
-# CONFIGURATION
+#---- CONFIGURATION
 # =====================================================================
+# the original fine-names were changed by : system.py
 input_dir = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename"
-base_dir = os.path.dirname(input_dir) 
+tft_dir = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\tft"
+base_dir = os.path.dirname(tft_dir) 
 
 # Directories setup
 baseline_dir = os.path.join(base_dir, "SAM_Baseline_Overlays")
@@ -43,6 +45,31 @@ for d in [baseline_dir, final_overlay_dir, accepted_mask_dir]:
 # Filtering Parameters
 MIN_PIXEL_AREA = 5000
 MAX_OVERLAP_IOU = 0.20
+
+# =====================================================================
+#---- START LOGGING
+# =====================================================================
+log_file_path = os.path.join(base_dir, "tinder_pipeline_log.txt")
+
+# CRITICAL FOR SPYDER: Remove existing handlers to avoid duplicate prints 
+# if you run the script multiple times in the same console session.
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+
+# Configure the standard logging module
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_file_path, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logging.info(f"{'='*50}")
+logging.info("PIPELINE EXECUTED: INITIALIZING SAM-3")
+logging.info(f"{'='*50}")
 
 # =====================================================================
 #---- HELPER FUNCTIONS
@@ -84,7 +111,6 @@ def create_overlay(image_np, masks_bool_list, color_mode="random"):
 def show_current_mask():
     global current_idx, final_filtered_masks, image_rgb, fig, ax, img_display, filename
     
-    # this closes the matplotlib window after dealing with the last mask.
     if current_idx >= len(final_filtered_masks):
         plt.close(fig)
         return
@@ -116,47 +142,46 @@ def on_key(event):
         current_idx += 1
         show_current_mask()
     elif event.key == 'r':  
-        print(f"Mistake made! Restarting annotations for {filename} from the beginning...")
+        logging.warning(f"Mistake made! Restarting annotations for {filename} from the beginning...")
         current_idx = 0
         accepted_masks.clear()
         final_binary_mask.fill(0) 
         show_current_mask()
     elif event.key == 'q':
-        quit_flag = True  # this has application below, to break-out fro the loop !
+        quit_flag = True  # this has application below, to break-out from the loop !
         plt.close(fig)
 
 # =====================================================================
 #---- MAIN PIPELINE (Global Scope)
 # =====================================================================
-print("Initializing SAM-3 Mask Generator...")
 generator = pipeline(
     "mask-generation", 
     model="facebook/sam3", 
     device="cuda",
     torch_dtype=torch.float32
 )
-print("SAM-3 loaded successfully!")
+logging.info("SAM-3 loaded successfully!")
 
 image_files = [f for f in os.listdir(input_dir) if f.endswith(('.png', '.jpg', '.jpeg'))]
 
 for filename in image_files:
-    # --- SMART RESUME: Check if this file is already done ---
     expected_mask_path = os.path.join(accepted_mask_dir, f"mask_{filename}")
+    #---- SMART RESUME
+        # Check if this file is already done ( yesterday, before you quit to home ).
     if os.path.exists(expected_mask_path):
-        print(f"\nSkipping {filename} - Already completed. (Delete the mask file if you want to redo it)")
-        continue
+        logging.info(f"Skipping {filename} - Already completed. (Delete the mask file if you want to redo it)")
+        continue  # return back to the beginning of the loop ( go to the top ) & continue with the next iteration.
 
-    print(f"\nProcessing: {filename}")
+    logging.info(f"Processing: {filename}")
     img_path = os.path.join(input_dir, filename)
     
     start_time = time.time()
     
-    # Read image with PIL
     pil_img = Image.open(img_path).convert("RGB")
     image_rgb = np.array(pil_img)
     image_area = image_rgb.shape[0] * image_rgb.shape[1]
     
-    print("Generating masks... Running 'Max Signal' aggressive search.")
+    logging.info("Generating masks... Running 'Max Signal' aggressive search.")
     results = generator(
         pil_img,
         points_per_batch=128,         
@@ -169,9 +194,9 @@ for filename in image_files:
     )
     
     raw_masks = results["masks"]
-    print(f"Max Signal Inference complete. Found {len(raw_masks)} total raw structures.")
+    logging.info(f"Max Signal Inference complete. Found {len(raw_masks)} total raw structures.")
     
-    print("Filtering noise and duplicates...")
+    logging.info("Filtering noise and duplicates...")
     
     # Phase 1: Size Filter
     valid_masks = []
@@ -204,16 +229,16 @@ for filename in image_files:
         if np.sum(mask_bool) <= (image_area * 0.30):
             final_filtered_masks.append(mask_bool)
             
-    print(f"Final UNIQUE structures after filtering: {len(final_filtered_masks)}")
+    logging.info(f"Final UNIQUE structures after filtering: {len(final_filtered_masks)}")
 
     if len(final_filtered_masks) == 0:
-        print("No valid structures found in this image. Skipping.")
+        logging.warning("No valid structures found in this image. Skipping.")
         continue
 
     # Save Baseline Overlay
     baseline_img = create_overlay(image_rgb, final_filtered_masks, color_mode="random")
     Image.fromarray(baseline_img).save(os.path.join(baseline_dir, f"baseline_{filename}"))
-    print("Saved baseline overlay.")
+    logging.info("Saved baseline overlay.")
     
     # =================================================================
     #---- INITIALIZE UI STATE VARIABLES
@@ -236,17 +261,23 @@ for filename in image_files:
     plt.show(block=True) 
     
     if quit_flag:
-        print("\nProgress saved. Shutting down the pipeline. See you tomorrow!")
-        break
+        logging.info("Progress saved. Shutting down the pipeline. See you tomorrow!")
+        break # get out of the loop ( get below ! ).
         
     Image.fromarray(final_binary_mask, mode='L').save(os.path.join(accepted_mask_dir, f"mask_{filename}"))
     final_overlay_img = create_overlay(image_rgb, accepted_masks, color_mode="random")
     Image.fromarray(final_overlay_img).save(os.path.join(final_overlay_dir, f"final_{filename}"))
     
     end_time = time.time()
-    print(f"Finished {filename} in {end_time - start_time:.2f} seconds. Saved Final Overlay and Binary Mask.")
+    logging.info(f"Finished {filename} in {end_time - start_time:.2f} seconds. Saved Final Overlay and Binary Mask.")
 
-print("\nPipeline execution complete.")
+logging.info("Pipeline execution complete.")
+
+# %% restore
+
+# Restore Spyder's normal console and plotting behavior
+plt.ion() 
+logging.info("Interactive mode and standard console output restored.")
 
 # %% out
 
