@@ -5,7 +5,15 @@
     # matplotlib
 # env_6
 
-# %%'
+# %% improvement
+
+# It's better to put these directories under the 'tft' folder.
+    # baseline_dir 
+    # final_overlay_dir 
+    # accepted_mask_dir 
+# use : pathlib.path : instead of : os.path.
+
+# %% modules
 
 import os
 import sys
