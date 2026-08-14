@@ -79,7 +79,7 @@ import sam3
 print(sam3.__file__)
 # C:\code\sam3\sam3\__init__.py]
 
-# %% GeoJSON
+# %% GeoJSON => mask
 
 # this converts the GeoJSOn outputs of the QuPath manual segmentations to a black & white mask.
 
@@ -159,7 +159,7 @@ geojson_to_mask(test_geojson_file,
 # %% compare folders
 
 # compare the original file & the manually segmented files folder.
-    # search if a file from te original folder is missing.
+    # search if a file from the original folder is missing.
 
 import os
 from pathlib import Path
@@ -475,13 +475,16 @@ print("Overlay generation complete!")
 # [SUCCESS] Created overlay for 'ZC04_1__crop_1__negative__' (from 'final_ZC04_1__crop_1__negative__.geojson') with 2 drawn structure(s).
 # ...
 
-# %%'
+# %% combine GeoJSON files
+
+# combined the 2 GeoJSON files ( easy & tortuous segmentations ) into 1 GeoJSON file.
+# create the overlay masks based on the combined GeoJSON file.
 
 import json
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-# %%
+# %%%'
 
 # =====================================================================
 # ---- DIRECTORY CONFIGURATION (Using pathlib)
@@ -581,11 +584,383 @@ for img_path in original_images:
 print("\n" + "-"*50)
 print("Master GeoJSON and Overlay generation complete! You are ready for the final review.")
 
-# %%
+# %%%'
 
     # [SKIP] No GeoJSON masks found for 'ZC04_1__crop_2__negative__'.
     # [SKIP] No GeoJSON masks found for 'ZC06_1__crop_1__negative__'.
     # [SKIP] No GeoJSON masks found for 'ZC06_1__crop_2__negative__'.
 
-# %%
+# %% mask
+
+# this takes the GeoJSOn files inside a folder & creates black-&-white masks from it.
+# it also reads the original crop images to read the dimmmensions :
+    # the output mask will be 1024 * 1024 or a variant of it according to he original crop size.
+
+import json
+from pathlib import Path
+from PIL import Image, ImageDraw
+
+# =====================================================================
+# ---- DIRECTORY CONFIGURATION 
+# =====================================================================
+geojson_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\geojson")
+original_crops_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename")
+output_mask_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\mask")
+
+# Ensure the output directory exists
+output_mask_dir.mkdir(parents=True, exist_ok=True)
+
+# =====================================================================
+# ---- PROCESSING LOOP
+# =====================================================================
+# Retrieve all .geojson files
+geojson_files = [p for p in geojson_dir.glob("*.geojson") if p.is_file()]
+
+print(f"Found {len(geojson_files)} Master GeoJSON files to convert.\n" + "-"*50)
+
+for geo_path in geojson_files:
+    base_name = geo_path.stem
+    
+    # 1. Get the exact dimensions of the original image to prevent size mismatches
+    original_img_path = original_crops_dir / f"{base_name}.png"
+    if original_img_path.is_file():
+        with Image.open(original_img_path) as img:
+            image_size = img.size # (width, height)
+    else:
+        print(f"[WARNING] Original image not found for '{base_name}'. Defaulting to 1024x1024.")
+        image_size = (1024, 1024)
+
+    # 2. Create a blank black canvas ('L' mode = 8-bit grayscale)
+    mask = Image.new('L', image_size, color=0)
+    draw = ImageDraw.Draw(mask)
+    
+    # 3. Parse the GeoJSON file
+    with open(geo_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        
+    features = data.get('features', [])
+    poly_count = 0
+    
+    # 4. Draw each polygon as pure white (255)
+    for feature in features:
+        geom = feature.get('geometry', {})
+        geom_type = geom.get('type')
+        coords = geom.get('coordinates', [])
+        
+        if geom_type == 'Polygon':
+            flat_coords = [c for point in coords[0] for c in point]
+            if len(flat_coords) >= 6: 
+                draw.polygon(flat_coords, fill=255)
+                poly_count += 1
+                
+        elif geom_type == 'MultiPolygon':
+            for poly in coords:
+                flat_coords = [c for point in poly[0] for c in point]
+                if len(flat_coords) >= 6:
+                    draw.polygon(flat_coords, fill=255)
+                    poly_count += 1
+                    
+    # 5. Save the final binary mask
+    mask_save_path = output_mask_dir / f"{base_name}_mask.png"
+    mask.save(mask_save_path)
+    
+    print(f"[SUCCESS] '{base_name}' -> Rendered {poly_count} polygons into binary mask.")
+
+print("\n" + "-"*50)
+print("Binary mask generation complete! The dataset is ready for LoRA training.")
+
+# %% crop
+
+# this crops all images ( original & black-&-white masks ) to the stanrdard 1024 * 1024 dimmensions.
+
+from pathlib import Path
+from PIL import Image
+
+# =====================================================================
+# ---- DIRECTORY CONFIGURATION 
+# =====================================================================
+# Input Directories
+original_source_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename")
+mask_source_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\mask")
+
+# Output Directories (The new LoRA training folders)
+lora_original_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original")
+lora_mask_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\mask")
+
+# Ensure output directories exist
+lora_original_dir.mkdir(parents=True, exist_ok=True)
+lora_mask_dir.mkdir(parents=True, exist_ok=True)
+
+# Standardized Target Box: (left, upper, right, lower)
+CROP_BOX = (0, 0, 1024, 1024)
+TARGET_SIZE = (1024, 1024)
+
+# =====================================================================
+# ---- PROCESSING LOOP
+# =====================================================================
+original_images = [p for p in original_source_dir.glob("*.png") if p.is_file()]
+
+print(f"Found {len(original_images)} original crops. Enforcing strict {TARGET_SIZE} crop.\n" + "-"*50)
+
+processed_count = 0
+cropped_count = 0
+
+for img_path in original_images:
+    base_name = img_path.stem
+    mask_path = mask_source_dir / f"{base_name}_mask.png"
+    
+    if not mask_path.is_file():
+        print(f"[WARNING] Mask not found for '{base_name}'. Skipping.")
+        continue
+        
+    # 1. Process the Original WSI Crop (RGB)
+    with Image.open(img_path) as img:
+        if img.size != TARGET_SIZE:
+            # Crop exactly 1024x1024 from the top-left, discarding the extra bottom row/right column
+            img_processed = img.crop(CROP_BOX)
+            was_cropped = True
+        else:
+            img_processed = img
+            was_cropped = False
+            
+        img_processed.save(lora_original_dir / f"{base_name}.png")
+
+    # 2. Process the Binary Mask (Black & White)
+    with Image.open(mask_path) as mask:
+        if mask.size != TARGET_SIZE:
+            mask_processed = mask.crop(CROP_BOX)
+        else:
+            mask_processed = mask
+            
+        mask_processed.save(lora_mask_dir / f"{base_name}.png")
+        
+    if was_cropped:
+        print(f"[INFO] '{base_name}' was cropped to {TARGET_SIZE}.")
+        cropped_count += 1
+        
+    processed_count += 1
+
+print("\n" + "-"*50)
+print(f"Success! {processed_count} image/mask pairs copied to LoRA data folder.")
+print(f"A total of {cropped_count} pairs required precision cropping.")
+
+# %%% out
+
+# Success! 96 image/mask pairs copied to LoRA data folder.
+# A total of 58 pairs required precision cropping.
+
+# %%% check
+
+# check if all image files are in the standard 1024 * 1024 dimmension.
+
+import os
+from collections import Counter
+from PIL import Image
+
+def analyze_image_dimensions(folder_path):
+    """
+    Scans a folder for .png images, checks their dimensions,
+    and counts how many images share each unique dimension.
+    """
+    dimensions = []
+
+    for filename in os.listdir(folder_path):
+        if filename.lower().endswith(".png"):
+            file_path = os.path.join(folder_path, filename)
+            try:
+                with Image.open(file_path) as img:
+                    dimensions.append(img.size)  # (width, height)
+            except Exception as e:
+                print(f"Could not read {filename}: {e}")
+
+    if not dimensions:
+        print("No .png images found in the folder.")
+        return
+
+    dimension_counts = Counter(dimensions)
+
+    print(f"\nTotal .png images found: {len(dimensions)}")
+    print(f"Unique dimensions found: {len(dimension_counts)}\n")
+
+    # Sort by count descending, then by dimension
+    for (width, height), count in sorted(dimension_counts.items(), key=lambda x: (-x[1], x[0])):
+        print(f"{count} image(s) with size: {width} x {height} pixels")
+
+# %%%% out
+
+
+folder = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\mask'
+analyze_image_dimensions(folder)
+
+
+    # Total .png images found: 96
+    # Unique dimensions found: 1
+    
+    # 96 image(s) with size: 1024 x 1024 pixels
+
+# %% count doubles
+
+# count the number of files per WSI :
+        # i.e. the nuber of instances per initial 4 digits in the filename( examle : ZC21 ... )
+# Claude
+
+import os
+from collections import defaultdict
+
+folder = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\mask'
+# folder = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original'
+
+groups = defaultdict(list)
+
+for filename in os.listdir(folder):
+    if len(filename) >= 4:
+        prefix = filename[:4]  # e.g. "ZC04"
+        groups[prefix].append(filename)
+
+single = {p: f for p, f in groups.items() if len(f) == 1}
+multiple = {p: f for p, f in groups.items() if len(f) > 1}
+
+print(f"Prefixes with only 1 file: {len(single)}")
+print(f"Prefixes with multiple files: {len(multiple)}")
+
+print("\n--- Single-instance prefixes ---")
+for p, f in single.items():
+    print(p, f)
+
+print("\n--- Multi-instance prefixes ---")
+for p, f in multiple.items():
+    print(p, f, f"(count: {len(f)})")
+
+# %%5 out
+
+# for both folders : original , mask :
+    # Prefixes with only 1 file: 0
+    # Prefixes with multiple files: 48
+    
+    # --- Single-instance prefixes ---
+    
+    # --- Multi-instance prefixes ---
+    # ZC04 ['ZC04_1__crop_1__negative__.png', 'ZC04_1__crop_2__negative__.png'] (count: 2)
+    # ZC06 ['ZC06_1__crop_1__negative__.png', 'ZC06_1__crop_2__negative__.png'] (count: 2)
+# ...
+
+# %% train-test split
+
+# splits the data & copies them to the corresponding directories.
+# uses a random-seed for reproducibility.
+
+import shutil
+import random
+from collections import defaultdict
+from pathlib import Path
+
+# =====================================================================
+# ---- DIRECTORY CONFIGURATION (Using pathlib)
+# =====================================================================
+base_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data")
+
+# Input directories
+original_dir = base_dir / "original"
+mask_dir = base_dir / "mask"
+
+# Output directories
+tts_dir = base_dir / "tts"
+train_orig = tts_dir / "train" / "original"
+train_mask = tts_dir / "train" / "mask"
+test_orig = tts_dir / "test" / "original"
+test_mask = tts_dir / "test" / "mask"
+
+# Create all required output directories
+for d in [train_orig, train_mask, test_orig, test_mask]:
+    d.mkdir(parents=True, exist_ok=True)
+
+# =====================================================================
+# ---- WSI-LEVEL SPLITTING LOGIC
+# =====================================================================
+print("Scanning files and grouping by WSI...")
+
+wsi_groups = defaultdict(list)
+# Scan the original images
+for img_path in original_dir.glob("*.png"):
+    if not img_path.is_file():
+        continue
+    
+    # The first 4 characters identify the WSI (e.g., 'ZC04')
+    wsi_id = img_path.name[:4]
+    wsi_groups[wsi_id].append(img_path.name)
+
+wsi_ids = list(wsi_groups.keys())
+print(f"Found {len(wsi_ids)} unique WSIs comprising {sum(len(v) for v in wsi_groups.values())} total crops.")
+
+# Sort the WSI IDs first to ensure consistent order before shuffling
+wsi_ids.sort()
+
+# Shuffle the WSIs with a fixed random seed (42) so the split is always identical
+# if you ever need to rerun this script in the future.
+random.seed(42)
+random.shuffle(wsi_ids)
+
+# Calculate roughly 20% for the test set (48 * 0.20 = ~9.6, so we'll use 10 WSIs)
+test_size = 10
+test_wsis = set(wsi_ids[:test_size])
+train_wsis = set(wsi_ids[test_size:])
+
+print(f"\nSplitting: {len(train_wsis)} WSIs for Training, {len(test_wsis)} WSIs for Testing.")
+print(f"Test WSIs: {sorted(list(test_wsis))}\n")
+
+# =====================================================================
+# ---- COPYING LOOP
+# =====================================================================
+train_count = 0
+test_count = 0
+
+for wsi_id, filenames in wsi_groups.items():
+    is_train = wsi_id in train_wsis
+    
+    dest_orig_dir = train_orig if is_train else test_orig
+    dest_mask_dir = train_mask if is_train else test_mask
+    
+    for filename in filenames:
+        # Paths
+        src_orig = original_dir / filename
+        src_mask = mask_dir / filename
+        
+        dst_orig = dest_orig_dir / filename
+        dst_mask = dest_mask_dir / filename
+        
+        # Copy files (shutil.copy2 preserves original file creation/modification metadata)
+        if src_orig.is_file():
+            shutil.copy2(src_orig, dst_orig)
+        else:
+            print(f"[WARNING] Missing original: {filename}")
+            
+        if src_mask.is_file():
+            shutil.copy2(src_mask, dst_mask)
+        else:
+            print(f"[WARNING] Missing mask: {filename}")
+            
+        if is_train:
+            train_count += 1
+        else:
+            test_count += 1
+
+print("-" * 50)
+print(f"Success! Data copying complete.")
+print(f"Train Set: {train_count} crops (from {len(train_wsis)} WSIs)")
+print(f"Test Set:  {test_count} crops (from {len(test_wsis)} WSIs)")
+
+# %%% out
+
+    # Scanning files and grouping by WSI...
+    # Found 48 unique WSIs comprising 96 total crops.
+    
+    # Splitting: 38 WSIs for Training, 10 WSIs for Testing.
+    # Test WSIs: ['ZC10', 'ZC20', 'ZC21', 'ZC23', 'ZC36', 'ZC38', 'ZC39', 'ZC44', 'ZC46', 'ZC57']
+    
+    # --------------------------------------------------
+    # Success! Data copying complete.
+    # Train Set: 76 crops (from 38 WSIs)
+    # Test Set:  20 crops (from 10 WSIs)
+
+# %%'
 

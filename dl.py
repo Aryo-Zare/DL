@@ -846,7 +846,7 @@ for key, value in get_os_info().items():
     # Python Version        : 3.12.13
     # Python Implementation : CPython
 
-# %%' sam-3
+# %% sam-3
 
 # %%% text-prompt
 
