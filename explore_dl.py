@@ -831,7 +831,7 @@ print("\n--- Multi-instance prefixes ---")
 for p, f in multiple.items():
     print(p, f, f"(count: {len(f)})")
 
-# %%5 out
+# %%% out
 
 # for both folders : original , mask :
     # Prefixes with only 1 file: 0
@@ -844,123 +844,187 @@ for p, f in multiple.items():
     # ZC06 ['ZC06_1__crop_1__negative__.png', 'ZC06_1__crop_2__negative__.png'] (count: 2)
 # ...
 
-# %% train-test split
+# %% coco  _  train-valid-test
 
-# splits the data & copies them to the corresponding directories.
-# uses a random-seed for reproducibility.
+# this generates coco-json files directly from the geo-json files.
+    # combines them & adds metadata to them.
+# train-validation-test split.
 
 import shutil
 import random
+import json
 from collections import defaultdict
 from pathlib import Path
 
 # =====================================================================
-# ---- DIRECTORY CONFIGURATION (Using pathlib)
+# ---- MATH HELPER FUNCTIONS
 # =====================================================================
-base_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data")
+def calculate_area(flat_coords):
+    pts = [(flat_coords[i], flat_coords[i+1]) for i in range(0, len(flat_coords), 2)]
+    area = 0.0
+    n = len(pts)
+    for i in range(n):
+        j = (i + 1) % n
+        area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1]
+    return abs(area) / 2.0
 
-# Input directories
-original_dir = base_dir / "original"
-mask_dir = base_dir / "mask"
+def calculate_bbox(flat_coords):
+    xs = flat_coords[0::2]
+    ys = flat_coords[1::2]
+    xmin, ymin = max(0, min(xs)), max(0, min(ys))
+    xmax, ymax = min(1024, max(xs)), min(1024, max(ys))
+    return [xmin, ymin, xmax - xmin, ymax - ymin]
 
-# Output directories
-tts_dir = base_dir / "tts"
-train_orig = tts_dir / "train" / "original"
-train_mask = tts_dir / "train" / "mask"
-test_orig = tts_dir / "test" / "original"
-test_mask = tts_dir / "test" / "mask"
+def clamp_coordinates(flat_coords):
+    return [max(0, min(1024, c)) for c in flat_coords]
 
-# Create all required output directories
-for d in [train_orig, train_mask, test_orig, test_mask]:
-    d.mkdir(parents=True, exist_ok=True)
+# =====================================================================
+# ---- DIRECTORY CONFIGURATION 
+# =====================================================================
+# Inputs
+original_images_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original")
+geojson_master_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\geojson")
+
+# Output (Creating a brand new, clean folder to avoid mix-ups)
+coco_base_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset")
+
+splits = ["train", "valid", "test"]
+for s in splits:
+    (coco_base_dir / s).mkdir(parents=True, exist_ok=True)
 
 # =====================================================================
 # ---- WSI-LEVEL SPLITTING LOGIC
 # =====================================================================
 print("Scanning files and grouping by WSI...")
-
 wsi_groups = defaultdict(list)
-# Scan the original images
-for img_path in original_dir.glob("*.png"):
+
+for img_path in original_images_dir.glob("*.png"):
     if not img_path.is_file():
         continue
-    
-    # The first 4 characters identify the WSI (e.g., 'ZC04')
     wsi_id = img_path.name[:4]
     wsi_groups[wsi_id].append(img_path.name)
 
 wsi_ids = list(wsi_groups.keys())
-print(f"Found {len(wsi_ids)} unique WSIs comprising {sum(len(v) for v in wsi_groups.values())} total crops.")
-
-# Sort the WSI IDs first to ensure consistent order before shuffling
 wsi_ids.sort()
 
-# Shuffle the WSIs with a fixed random seed (42) so the split is always identical
-# if you ever need to rerun this script in the future.
+# Fixed seed for reproducibility
 random.seed(42)
 random.shuffle(wsi_ids)
 
-# Calculate roughly 20% for the test set (48 * 0.20 = ~9.6, so we'll use 10 WSIs)
-test_size = 10
-test_wsis = set(wsi_ids[:test_size])
-train_wsis = set(wsi_ids[test_size:])
+# Split 48 WSIs: 5 Test, 5 Valid, 38 Train
+test_wsis = set(wsi_ids[:5])
+valid_wsis = set(wsi_ids[5:10])
+train_wsis = set(wsi_ids[10:])
 
-print(f"\nSplitting: {len(train_wsis)} WSIs for Training, {len(test_wsis)} WSIs for Testing.")
-print(f"Test WSIs: {sorted(list(test_wsis))}\n")
+wsi_split_map = {}
+for w in train_wsis: wsi_split_map[w] = "train"
+for w in valid_wsis: wsi_split_map[w] = "valid"
+for w in test_wsis: wsi_split_map[w] = "test"
 
 # =====================================================================
-# ---- COPYING LOOP
+# ---- COPY IMAGES AND BUILD COCO JSON
 # =====================================================================
-train_count = 0
-test_count = 0
-
-for wsi_id, filenames in wsi_groups.items():
-    is_train = wsi_id in train_wsis
+for split_name in splits:
+    print(f"\nProcessing '{split_name.upper()}' split...")
     
-    dest_orig_dir = train_orig if is_train else test_orig
-    dest_mask_dir = train_mask if is_train else test_mask
+    split_dir = coco_base_dir / split_name
+    output_json_path = split_dir / "_annotations.coco.json"
     
-    for filename in filenames:
-        # Paths
-        src_orig = original_dir / filename
-        src_mask = mask_dir / filename
-        
-        dst_orig = dest_orig_dir / filename
-        dst_mask = dest_mask_dir / filename
-        
-        # Copy files (shutil.copy2 preserves original file creation/modification metadata)
-        if src_orig.is_file():
-            shutil.copy2(src_orig, dst_orig)
-        else:
-            print(f"[WARNING] Missing original: {filename}")
+    coco_format = {
+        "images": [],
+        "annotations": [],
+        "categories": [{"id": 1, "name": "tubule", "supercategory": "anatomy"}]
+    }
+    
+    annotation_id = 1
+    image_id = 1
+    
+    for wsi_id, filenames in wsi_groups.items():
+        if wsi_split_map[wsi_id] != split_name:
+            continue
             
-        if src_mask.is_file():
-            shutil.copy2(src_mask, dst_mask)
-        else:
-            print(f"[WARNING] Missing mask: {filename}")
+        for filename in filenames:
+            src_img = original_images_dir / filename
+            dst_img = split_dir / filename
             
-        if is_train:
-            train_count += 1
-        else:
-            test_count += 1
+            # 1. Copy the .png image
+            shutil.copy2(src_img, dst_img)
+            
+            # 2. Add Image Metadata to COCO
+            coco_format["images"].append({
+                "id": image_id,
+                "file_name": filename,
+                "width": 1024,
+                "height": 1024
+            })
+            
+            # 3. Find corresponding Master GeoJSON
+            base_name = Path(filename).stem
+            geo_path = geojson_master_dir / f"{base_name}.geojson"
+            
+            if geo_path.is_file():
+                with open(geo_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                for feature in data.get('features', []):
+                    geom = feature.get('geometry', {})
+                    geom_type = geom.get('type')
+                    coords = geom.get('coordinates', [])
+                    
+                    polygons_to_process = []
+                    if geom_type == 'Polygon':
+                        polygons_to_process.append(coords[0])
+                    elif geom_type == 'MultiPolygon':
+                        for poly in coords:
+                            polygons_to_process.append(poly[0])
+                            
+                    for poly in polygons_to_process:
+                        flat_coords = [c for point in poly for c in point]
+                        if len(flat_coords) >= 6:
+                            clamped_coords = clamp_coordinates(flat_coords)
+                            bbox = calculate_bbox(clamped_coords)
+                            area = calculate_area(clamped_coords)
+                            
+                            coco_format["annotations"].append({
+                                "id": annotation_id,
+                                "image_id": image_id,
+                                "category_id": 1,
+                                "segmentation": [clamped_coords],
+                                "area": float(area),
+                                "bbox": [float(b) for b in bbox],
+                                "iscrowd": 0
+                            })
+                            annotation_id += 1
+                            
+            image_id += 1
 
-print("-" * 50)
-print(f"Success! Data copying complete.")
-print(f"Train Set: {train_count} crops (from {len(train_wsis)} WSIs)")
-print(f"Test Set:  {test_count} crops (from {len(test_wsis)} WSIs)")
+    # Save the _annotations.coco.json inside the split folder
+    with open(output_json_path, 'w') as f:
+        json.dump(coco_format, f, indent=4)
+        
+    print(f"-> Saved {image_id - 1} images and {annotation_id - 1} annotations.")
+
+print("\n" + "="*50)
+print("Dataset completely refactored into Train/Valid/Test COCO format!")
 
 # %%% out
 
     # Scanning files and grouping by WSI...
-    # Found 48 unique WSIs comprising 96 total crops.
     
-    # Splitting: 38 WSIs for Training, 10 WSIs for Testing.
-    # Test WSIs: ['ZC10', 'ZC20', 'ZC21', 'ZC23', 'ZC36', 'ZC38', 'ZC39', 'ZC44', 'ZC46', 'ZC57']
+    # Processing 'TRAIN' split...
+    # -> Saved 76 images and 932 annotations.
     
-    # --------------------------------------------------
-    # Success! Data copying complete.
-    # Train Set: 76 crops (from 38 WSIs)
-    # Test Set:  20 crops (from 10 WSIs)
+    # Processing 'VALID' split...
+    # -> Saved 10 images and 108 annotations.
+    
+    # Processing 'TEST' split...
+    # -> Saved 10 images and 95 annotations.
+    
+    # ==================================================
+    # Dataset completely refactored into Train/Valid/Test COCO format!
 
 # %%'
+
+
+
 
