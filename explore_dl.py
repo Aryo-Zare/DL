@@ -898,6 +898,10 @@ for s in splits:
 print("Scanning files and grouping by WSI...")
 wsi_groups = defaultdict(list)
 
+
+# this is because there are 2 crops per WSI.
+    # splitting should be done per-WSI, not per-crop..
+    # otherwise, crops from the same WSI ( similar shapes ) may be split to different groups ( trai, test ).
 for img_path in original_images_dir.glob("*.png"):
     if not img_path.is_file():
         continue
@@ -1022,6 +1026,303 @@ print("Dataset completely refactored into Train/Valid/Test COCO format!")
     
     # ==================================================
     # Dataset completely refactored into Train/Valid/Test COCO format!
+
+# %% loss_curves
+
+# ~ Tensor-board
+
+import json
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# 1. Load the JSON Lines data
+data = []
+file_path = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\val_stats.json"
+
+with open(file_path, "r") as f:
+    for line in f:
+        if line.strip():  # Skip any blank lines
+            data.append(json.loads(line))
+
+# Convert to a Pandas DataFrame for easy math
+df = pd.DataFrame(data)
+
+# 2. Calculate the Smoothing (Exponential Moving Average)
+# TensorBoard uses an EMA to create the smooth line. 
+# A smoothing weight of 0.6 means the smooth line is a blend: 
+# 40% of the current raw point + 60% of the previous smoothed point.
+smoothing_weight = 0.6
+alpha = 1 - smoothing_weight
+
+df['train_smoothed'] = df['train_loss'].ewm(alpha=alpha, adjust=False).mean()
+df['val_smoothed'] = df['val_loss'].ewm(alpha=alpha, adjust=False).mean()
+
+# 3. Build the Plot
+# Create a figure with 2 subplots (one on top of the other)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+
+# --- Top Graph: Training Loss ---
+# Plot raw data as a faded background line
+ax1.plot(df['epoch'], df['train_loss'], alpha=0.3, color='blue', label='Train Loss (Raw)')
+# Plot smoothed data as a thick foreground line
+ax1.plot(df['epoch'], df['train_smoothed'], color='blue', linewidth=2, label='Train Loss (Smoothed)')
+ax1.set_title('Training Loss over 50 Epochs', fontsize=14, fontweight='bold')
+ax1.set_ylabel('Loss')
+ax1.grid(True, linestyle='--', alpha=0.5)
+ax1.legend()
+
+# --- Bottom Graph: Validation Loss ---
+ax2.plot(df['epoch'], df['val_loss'], alpha=0.3, color='orange', label='Val Loss (Raw)')
+ax2.plot(df['epoch'], df['val_smoothed'], color='orange', linewidth=2, label='Val Loss (Smoothed)')
+ax2.set_title('Validation Loss over 50 Epochs', fontsize=14, fontweight='bold')
+ax2.set_xlabel('Epoch')
+ax2.set_ylabel('Loss')
+ax2.grid(True, linestyle='--', alpha=0.5)
+ax2.legend()
+
+# 4. Finalize and Save
+plt.tight_layout()
+
+# Save a high-resolution PNG to your output folder
+save_path = r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\loss_curves.pdf"
+plt.savefig(save_path)
+
+# Display the graph on your screen
+plt.show()
+
+# %% visual evaluation
+
+import sys
+import os
+from pathlib import Path
+
+# -------------------------------------------------------------------------
+#---- SPYDER FIX: 
+        # Tell Python exactly where the SAM3 project folder is
+    # for importing functions from : validate_sam3_lora.py
+# -------------------------------------------------------------------------
+PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
+sys.path.append(str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
+
+import yaml
+import json
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
+from torchvision.transforms import v2
+
+from pycocotools.coco import COCO
+from pycocotools import mask as mask_utils
+
+# Import raw SAM3 and LoRA building blocks directly
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.model_misc import SAM3Output
+from sam3.train.data.sam3_image_dataset import Datapoint, Image, FindQueryLoaded, InferenceMetadata
+from sam3.train.data.collator import collate_fn_api
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights   #  C:\code\SAM3_LoRA\lora_layers.py
+
+# This function IS standalone in Sompote's code, so we can import it!
+from validate_sam3_lora import apply_sam3_nms, move_to_device
+
+# -------------------------------------------------------------------------
+#---- PATH CONFIGURATION
+# -------------------------------------------------------------------------
+CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
+WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
+TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
+OUTPUT_VIS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_eval")
+
+OUTPUT_VIS_DIR.mkdir(parents=True, exist_ok=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -------------------------------------------------------------------------
+#---- 1. BUILD MODEL & LOAD LORA
+# -------------------------------------------------------------------------
+print("Building SAM3 model and injecting LoRA weights...")
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+# Build base model
+model = build_sam3_image_model(
+    device=device.type, compile=False, load_from_HF=True, 
+    bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
+)
+
+# Apply LoRA Config
+lora_cfg = config["lora"]
+lora_config = LoRAConfig(
+    rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], dropout=lora_cfg["dropout"],
+    target_modules=lora_cfg["target_modules"],
+    apply_to_vision_encoder=lora_cfg["apply_to_vision_encoder"],
+    apply_to_text_encoder=lora_cfg["apply_to_text_encoder"],
+    apply_to_geometry_encoder=lora_cfg["apply_to_geometry_encoder"],
+    apply_to_detr_encoder=lora_cfg["apply_to_detr_encoder"],
+    apply_to_detr_decoder=lora_cfg["apply_to_detr_decoder"],
+    apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"],
+)
+model = apply_lora_to_model(model, lora_config)
+load_lora_weights(model, str(WEIGHTS_PATH))
+model.to(device)
+model.eval()
+
+# -------------------------------------------------------------------------
+#---- 2. LOAD COCO ANNOTATIONS
+# -------------------------------------------------------------------------
+coco_json_path = TEST_DIR / "_annotations.coco.json"
+if not coco_json_path.exists():
+    coco_json_path = list(TEST_DIR.glob("*.json"))[0]
+
+coco_gt = COCO(str(coco_json_path))
+image_ids = coco_gt.getImgIds()
+
+# Standard SAM3 Image Transforms
+transform = v2.Compose([
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+# -------------------------------------------------------------------------
+#---- 3. RUN INFERENCE & GENERATE VISUALIZATIONS
+# -------------------------------------------------------------------------
+print(f"\nGenerating visual overlays for {len(image_ids)} test images...")
+
+for idx, img_id in enumerate(image_ids):
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    
+    # Load and process raw image
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    # SAM3 requires exact 1008x1008 input
+    resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    image_tensor = transform(resized_image)
+
+    # Extract Ground Truth Binary Mask
+    ann_ids = coco_gt.getAnnIds(imgIds=img_id)
+    anns = coco_gt.loadAnns(ann_ids)
+    gt_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    for ann in anns:
+        gt_mask_combined = np.maximum(gt_mask_combined, coco_gt.annToMask(ann))
+
+    # --- Create Input Batch for SAM3 ---
+    image_obj = Image(data=image_tensor, objects=[], size=(1008, 1008))
+    query = FindQueryLoaded(
+        query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True,
+        query_processing_order=0, inference_metadata=InferenceMetadata(
+            coco_image_id=img_id, original_image_id=img_id, original_category_id=0,
+            original_size=(orig_h, orig_w), object_id=-1, frame_index=-1
+        )
+    )
+    datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
+    batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    
+    # Move to GPU using SAM3's recursive helper function
+    input_batch = batch_dict["input"]
+    input_batch = move_to_device(input_batch, device)
+
+    # --- Run Model ---
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs_list = model(input_batch)
+            
+        with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
+            final_outputs = list(outputs_iter)[-1][-1]
+            pred_logits = final_outputs['pred_logits'][0].detach().cpu()
+            pred_boxes = final_outputs['pred_boxes'][0].detach().cpu()
+            pred_masks = final_outputs['pred_masks'][0].detach().cpu()
+
+        # Apply NMS to clean up predictions
+        filtered_masks, filtered_scores, _ = apply_sam3_nms(
+            pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
+            prob_threshold=0.3, nms_iou_threshold=0.7
+        )
+
+    # Upscale 288x288 predicted masks back to original image size
+    pred_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    if len(filtered_masks) > 0:
+        upsampled_masks = torch.nn.functional.interpolate(
+            filtered_masks.unsqueeze(1).float(), 
+            size=(orig_h, orig_w), mode='bilinear', align_corners=False
+        ).squeeze(1)
+        
+        # Binarize threshold and combine
+        binary_masks = (upsampled_masks > 0.5).numpy()
+        for m in binary_masks:
+            pred_mask_combined = np.maximum(pred_mask_combined, m.astype(np.uint8))
+
+    # ---------------------------------------------------------------------
+    #---- 4. PLOT 3-PANEL COMPARISON
+    # ---------------------------------------------------------------------
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+    axes[0].imshow(pil_image)
+    axes[0].set_title(f"Test Image #{img_id} (Original)", fontsize=12, fontweight="bold")
+    axes[0].axis("off")
+
+    axes[1].imshow(pil_image)
+    axes[1].imshow(gt_mask_combined, cmap="Greens", alpha=0.45)
+    axes[1].set_title(f"Ground Truth ({len(anns)} Tubules)", fontsize=12, fontweight="bold")
+    axes[1].axis("off")
+
+    axes[2].imshow(pil_image)
+    axes[2].imshow(pred_mask_combined, cmap="Reds", alpha=0.45)
+    axes[2].set_title(f"SAM-3 LoRA Prediction ({len(filtered_masks)} Detections)", fontsize=12, fontweight="bold")
+    axes[2].axis("off")
+
+    plt.tight_layout()
+    save_file = OUTPUT_VIS_DIR / f"comparison_img_{img_id}.png"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[{idx+1}/{len(image_ids)}] Saved: {save_file.name}")
+
+print(f"\n✅ All visual results successfully saved in: {OUTPUT_VIS_DIR}")
+
+# %%% out
+
+    # Building SAM3 model and injecting LoRA weights...
+    # Replaced 37 nn.MultiheadAttention modules with MultiheadAttentionLoRA
+    # Applied LoRA to 314 modules:
+    #   - backbone.vision_backbone.trunk.blocks.0.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.0.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.0.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.0.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.1.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.1.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.1.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.1.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.2.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.2.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.2.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.2.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.3.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.3.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.3.mlp.fc1
+    # and 299 more
+    # Loaded LoRA weights from F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt
+    # loading annotations into memory...
+    # Done (t=0.00s)
+    # creating index...
+    # index created!
+    
+    # Generating visual overlays for 10 test images...
+    # c:\code\dl\explore_dl.py:1227: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+    #   with torch.cuda.amp.autocast():
+    # [1/10] Saved: comparison_img_1.png
+    # [2/10] Saved: comparison_img_2.png
+    # [3/10] Saved: comparison_img_3.png
+    # [4/10] Saved: comparison_img_4.png
+    # [5/10] Saved: comparison_img_5.png
+    # [6/10] Saved: comparison_img_6.png
+    # [7/10] Saved: comparison_img_7.png
+    # [8/10] Saved: comparison_img_8.png
+    # [9/10] Saved: comparison_img_9.png
+    # [10/10] Saved: comparison_img_10.png
+    
+    # ✅ All visual results successfully saved in: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_eval
 
 # %%'
 
