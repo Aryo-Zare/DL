@@ -882,7 +882,9 @@ def clamp_coordinates(flat_coords):
 # ---- DIRECTORY CONFIGURATION 
 # =====================================================================
 # Inputs
+# this contains the 96 crops ( 2 * 48 WSIs ).
 original_images_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original")
+# this contains 96 corresponding GeoJson files.
 geojson_master_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\geojson")
 
 # Output (Creating a brand new, clean folder to avoid mix-ups)
@@ -937,7 +939,9 @@ for split_name in splits:
     coco_format = {
         "images": [],
         "annotations": [],
-        "categories": [{"id": 1, "name": "tubule", "supercategory": "anatomy"}]
+        "categories": [{"id": 1, 
+                        "name": "tubule", 
+                        "supercategory": "anatomy"}]
     }
     
     annotation_id = 1
@@ -1092,18 +1096,37 @@ plt.show()
 
 # %% visual evaluation
 
+"""
+SAM-3 LoRA Visual Evaluation Pipeline
+-------------------------------------
+This script loads a base SAM-3 model, injects custom LoRA weights, and runs
+inference on a COCO-formatted test dataset of medical images. 
+It generates side-by-side 3-panel visual comparisons: 
+[Original Image] | [Ground Truth] | [Model Prediction]
+"""
+
 import sys
 import os
 from pathlib import Path
 
+
 # -------------------------------------------------------------------------
-#---- SPYDER FIX: 
-        # Tell Python exactly where the SAM3 project folder is
+#---- SPYDER FIX  _  ENVIRONMENT & PATH FIXES 
+# This section ensures the script runs flawlessly in IDEs like Spyder.
+# By forcing the OS working directory to the project root, we ensure SAM-3 
+# can find its relative internal assets (like the bpe_simple_vocab text file).
+# Tell Python exactly where the SAM3 project folder is
     # for importing functions from : validate_sam3_lora.py
 # -------------------------------------------------------------------------
 PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
-sys.path.append(str(PROJECT_ROOT))
+
+# this may not be needed ( because of : pip install -e . ).
+    # Fallback just in case editable install is missing.
+sys.path.append(str(PROJECT_ROOT))  
+
 os.chdir(PROJECT_ROOT)
+
+# -------------------------------------------------------------------------
 
 import yaml
 import json
@@ -1116,24 +1139,27 @@ from torchvision.transforms import v2
 from pycocotools.coco import COCO
 from pycocotools import mask as mask_utils
 
-# Import raw SAM3 and LoRA building blocks directly
+# Import raw SAM-3 architecture components
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.model_misc import SAM3Output
 from sam3.train.data.sam3_image_dataset import Datapoint, Image, FindQueryLoaded, InferenceMetadata
 from sam3.train.data.collator import collate_fn_api
-from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights   #  C:\code\SAM3_LoRA\lora_layers.py
 
+# Import custom LoRA injection and evaluation helpers
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights   #  C:\code\SAM3_LoRA\lora_layers.py
 # This function IS standalone in Sompote's code, so we can import it!
 from validate_sam3_lora import apply_sam3_nms, move_to_device
 
 # -------------------------------------------------------------------------
 #---- PATH CONFIGURATION
 # -------------------------------------------------------------------------
+# Update these paths if you move your data or train a new model.
 CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
 WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
 TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
 OUTPUT_VIS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_eval")
 
+# Automatically create the output directory if it doesn't exist
 OUTPUT_VIS_DIR.mkdir(parents=True, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1145,12 +1171,13 @@ with open(CONFIG_PATH, "r") as f:
     config = yaml.safe_load(f)
 
 # Build base model
+# 1A: Load the massive base SAM-3 Model (Frozen weights)
 model = build_sam3_image_model(
     device=device.type, compile=False, load_from_HF=True, 
     bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
 )
 
-# Apply LoRA Config
+# 1B: Configure LoRA based on your YAML settings
 lora_cfg = config["lora"]
 lora_config = LoRAConfig(
     rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], dropout=lora_cfg["dropout"],
@@ -1162,22 +1189,28 @@ lora_config = LoRAConfig(
     apply_to_detr_decoder=lora_cfg["apply_to_detr_decoder"],
     apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"],
 )
+
+# 1C: Surgically inject the LoRA layers into the base model and load trained weights
 model = apply_lora_to_model(model, lora_config)
 load_lora_weights(model, str(WEIGHTS_PATH))
+
+# Move the fully assembled model to the GPU and set to evaluation mode (no gradients).
 model.to(device)
 model.eval()
 
 # -------------------------------------------------------------------------
-#---- 2. LOAD COCO ANNOTATIONS
+#---- 2. LOAD COCO ANNOTATIONS & TRANSFORMS
 # -------------------------------------------------------------------------
+# Find and load the COCO JSON file which holds the Ground Truth coordinates
 coco_json_path = TEST_DIR / "_annotations.coco.json"
 if not coco_json_path.exists():
-    coco_json_path = list(TEST_DIR.glob("*.json"))[0]
+    coco_json_path = list(TEST_DIR.glob("*.json"))[0]  # Fallback to any JSON in the folder
 
 coco_gt = COCO(str(coco_json_path))
 image_ids = coco_gt.getImgIds()
 
 # Standard SAM3 Image Transforms
+# Image Normalization: SAM-3 expects pixel values scaled to a specific distribution.
 transform = v2.Compose([
     v2.ToImage(),
     v2.ToDtype(torch.float32, scale=True),
@@ -1190,18 +1223,23 @@ transform = v2.Compose([
 print(f"\nGenerating visual overlays for {len(image_ids)} test images...")
 
 for idx, img_id in enumerate(image_ids):
+    # Fetch image metadata from COCO
     img_info = coco_gt.loadImgs(img_id)[0]
     img_path = TEST_DIR / img_info["file_name"]
     
-    # Load and process raw image
+    # Load raw image and get its true original dimensions
     pil_image = PILImage.open(img_path).convert("RGB")
     orig_w, orig_h = pil_image.size
     
-    # SAM3 requires exact 1008x1008 input
+    # CRITICAL: SAM-3 architecture strictly requires 1008x1008 pixel input images.
     resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
     image_tensor = transform(resized_image)
 
+
+    # --- Construct the Ground Truth Mask ---
     # Extract Ground Truth Binary Mask
+    # We combine all individual tubule annotations into one flat binary mask
+    # so we can overlay it cleanly on the image later.
     ann_ids = coco_gt.getAnnIds(imgIds=img_id)
     anns = coco_gt.loadAnns(ann_ids)
     gt_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
@@ -1217,18 +1255,23 @@ for idx, img_id in enumerate(image_ids):
             original_size=(orig_h, orig_w), object_id=-1, frame_index=-1
         )
     )
+    
+    # Pack the image and query into the complex BatchedDatapoint structure SAM-3 expects
     datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
     batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
     
     # Move to GPU using SAM3's recursive helper function
+    # Use the recursive helper function to safely move all nested tensors to the GPU
     input_batch = batch_dict["input"]
     input_batch = move_to_device(input_batch, device)
 
     # --- Run Model ---
-    with torch.no_grad():
-        with torch.cuda.amp.autocast():
+    # --- Execute Model Inference ---
+    with torch.no_grad():  # Disable memory-heavy gradient tracking
+        with torch.cuda.amp.autocast():  # Use mixed precision (AMP) for faster processing
             outputs_list = model(input_batch)
-            
+        
+        # Extract the final stage predictions from the model's complex output dictionary
         with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
             final_outputs = list(outputs_iter)[-1][-1]
             pred_logits = final_outputs['pred_logits'][0].detach().cpu()
@@ -1236,11 +1279,17 @@ for idx, img_id in enumerate(image_ids):
             pred_masks = final_outputs['pred_masks'][0].detach().cpu()
 
         # Apply NMS to clean up predictions
+        # Non-Maximum Suppression (NMS): Filter out low-confidence guesses and 
+        # delete duplicate bounding boxes/masks that overlap too much (IoU > 0.7).
         filtered_masks, filtered_scores, _ = apply_sam3_nms(
             pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
             prob_threshold=0.3, nms_iou_threshold=0.7
         )
 
+
+    # --- Upscale Predicted Masks ---
+    # SAM-3 internally outputs predictions at a smaller 288x288 resolution to save memory.
+    # We must upscale them back to the original medical image dimensions.
     # Upscale 288x288 predicted masks back to original image size
     pred_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
     if len(filtered_masks) > 0:
@@ -1250,6 +1299,7 @@ for idx, img_id in enumerate(image_ids):
         ).squeeze(1)
         
         # Binarize threshold and combine
+        # Convert raw confidence logits into strict 0 or 1 binary masks
         binary_masks = (upsampled_masks > 0.5).numpy()
         for m in binary_masks:
             pred_mask_combined = np.maximum(pred_mask_combined, m.astype(np.uint8))
@@ -1257,22 +1307,27 @@ for idx, img_id in enumerate(image_ids):
     # ---------------------------------------------------------------------
     #---- 4. PLOT 3-PANEL COMPARISON
     # ---------------------------------------------------------------------
+    # Create an 18x6 inch wide figure containing 3 side-by-side plots
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
+    # Panel 1: Original raw H&E image
     axes[0].imshow(pil_image)
     axes[0].set_title(f"Test Image #{img_id} (Original)", fontsize=12, fontweight="bold")
     axes[0].axis("off")
 
+    # Panel 2: Ground Truth annotations overlay (Green)
     axes[1].imshow(pil_image)
     axes[1].imshow(gt_mask_combined, cmap="Greens", alpha=0.45)
     axes[1].set_title(f"Ground Truth ({len(anns)} Tubules)", fontsize=12, fontweight="bold")
     axes[1].axis("off")
 
+    # Panel 3: SAM-3 AI Predictions overlay (Red)
     axes[2].imshow(pil_image)
     axes[2].imshow(pred_mask_combined, cmap="Reds", alpha=0.45)
     axes[2].set_title(f"SAM-3 LoRA Prediction ({len(filtered_masks)} Detections)", fontsize=12, fontweight="bold")
     axes[2].axis("off")
 
+    # Save the output file tightly cropped
     plt.tight_layout()
     save_file = OUTPUT_VIS_DIR / f"comparison_img_{img_id}.png"
     plt.savefig(save_file, dpi=300, bbox_inches="tight")
@@ -1324,8 +1379,655 @@ print(f"\n✅ All visual results successfully saved in: {OUTPUT_VIS_DIR}")
     
     # ✅ All visual results successfully saved in: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_eval
 
+# %% evaluation _ query _ LoRA , SAM-3
+
+"""
+SAM-3 LoRA: 4-Panel Visual Evaluation & Raw Metrics Logger
+Generates 2x2 comparisons and a Pandas DataFrame for statistical testing.
+"""
+
+import sys
+import os
+from pathlib import Path
+import yaml
+import json
+import torch
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
+from torchvision.transforms import v2
+from pycocotools.coco import COCO
+from pycocotools import mask as mask_utils
+
+# SPYDER FIX
+PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
+sys.path.append(str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
+
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.model_misc import SAM3Output
+from sam3.train.data.sam3_image_dataset import Datapoint, Image, FindQueryLoaded, InferenceMetadata
+from sam3.train.data.collator import collate_fn_api
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from validate_sam3_lora import apply_sam3_nms, move_to_device
+
+# -------------------------------------------------------------------------
+# ---- CONFIGURATION
+# -------------------------------------------------------------------------
+CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
+WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
+TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
+OUTPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_and_metrics")
+# OUTPUT_DIR = Path(r'F:\temp\11')
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Helper function to calculate raw pixel metrics
+def calculate_pixel_metrics(pred_mask, gt_mask):
+    pred_bool = pred_mask > 0
+    gt_bool = gt_mask > 0
+    
+    tp = np.logical_and(pred_bool, gt_bool).sum()
+    fp = np.logical_and(pred_bool, np.logical_not(gt_bool)).sum()
+    fn = np.logical_and(np.logical_not(pred_bool), gt_bool).sum()
+    
+    iou = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    
+    return int(tp), int(fp), int(fn), float(iou), float(precision), float(recall)
+
+# -------------------------------------------------------------------------
+# ---- 1. INITIALIZE DATA & MODEL
+# -------------------------------------------------------------------------
+print("Loading COCO annotations...")
+coco_json_path = TEST_DIR / "_annotations.coco.json"
+if not coco_json_path.exists():
+    coco_json_path = list(TEST_DIR.glob("*.json"))[0]
+
+coco_gt = COCO(str(coco_json_path))
+image_ids = coco_gt.getImgIds()
+
+transform = v2.Compose([
+    v2.ToImage(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+print("\nBuilding BASE SAM-3 model (Zero-Shot)...")
+model = build_sam3_image_model(
+    device=device.type, compile=False, load_from_HF=True, 
+    bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
+)
+model.to(device)
+model.eval()
+
+# Memory Dictionaries to store results
+base_predictions = {}
+lora_predictions = {}
+metrics_data = []
+
+# -------------------------------------------------------------------------
+# ---- 2. PASS 1: BASE MODEL INFERENCE
+# -------------------------------------------------------------------------
+print(f"Running BASE inference on {len(image_ids)} images...")
+for img_id in image_ids:
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    image_tensor = transform(resized_image)
+
+    image_obj = Image(data=image_tensor, objects=[], size=(1008, 1008))
+    query = FindQueryLoaded(
+        query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True,   # tubule
+        query_processing_order=0, inference_metadata=InferenceMetadata(
+            coco_image_id=img_id, original_image_id=img_id, original_category_id=0,
+            original_size=(orig_h, orig_w), object_id=-1, frame_index=-1
+        )
+    )
+    datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
+    batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    input_batch = move_to_device(batch_dict["input"], device)
+
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs_list = model(input_batch)
+        with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
+            final_outputs = list(outputs_iter)[-1][-1]
+            pred_logits = final_outputs['pred_logits'][0].detach().cpu()
+            pred_boxes = final_outputs['pred_boxes'][0].detach().cpu()
+            pred_masks = final_outputs['pred_masks'][0].detach().cpu()
+
+        filtered_masks, filtered_scores, _ = apply_sam3_nms(
+            pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
+            prob_threshold=0.3, nms_iou_threshold=0.7
+        )
+    
+    base_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    if len(filtered_masks) > 0:
+        upsampled_masks = torch.nn.functional.interpolate(
+            filtered_masks.unsqueeze(1).float(), size=(orig_h, orig_w), mode='bilinear', align_corners=False
+        ).squeeze(1)
+        for m in (upsampled_masks > 0.5).numpy():
+            base_mask_combined = np.maximum(base_mask_combined, m.astype(np.uint8))
+            
+    base_predictions[img_id] = {
+        "mask": base_mask_combined,
+        "detections": len(filtered_masks)
+    }
+
+# -------------------------------------------------------------------------
+# ---- 3. PASS 2: INJECT LORA & RUN INFERENCE
+# -------------------------------------------------------------------------
+print("\nInjecting LoRA weights into the model...")
+model.to("cpu") # Safely move to CPU before architectural changes
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+lora_cfg = config["lora"]
+lora_config = LoRAConfig(
+    rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], dropout=lora_cfg["dropout"],
+    target_modules=lora_cfg["target_modules"], apply_to_vision_encoder=lora_cfg["apply_to_vision_encoder"],
+    apply_to_text_encoder=lora_cfg["apply_to_text_encoder"], apply_to_geometry_encoder=lora_cfg["apply_to_geometry_encoder"],
+    apply_to_detr_encoder=lora_cfg["apply_to_detr_encoder"], apply_to_detr_decoder=lora_cfg["apply_to_detr_decoder"],
+    apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"]
+)
+
+model = apply_lora_to_model(model, lora_config)
+load_lora_weights(model, str(WEIGHTS_PATH))
+model.to(device)
+model.eval()
+
+print(f"Running LoRA inference on {len(image_ids)} images...")
+for img_id in image_ids:
+    # We load the exact same inputs again
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    image_tensor = transform(resized_image)
+    image_obj = Image(data=image_tensor, objects=[], size=(1008, 1008))
+    query = FindQueryLoaded(query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True, query_processing_order=0, inference_metadata=InferenceMetadata(coco_image_id=img_id, original_image_id=img_id, original_category_id=0, original_size=(orig_h, orig_w), object_id=-1, frame_index=-1))
+    datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
+    batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    input_batch = move_to_device(batch_dict["input"], device)
+
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs_list = model(input_batch)
+        with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
+            final_outputs = list(outputs_iter)[-1][-1]
+            pred_logits = final_outputs['pred_logits'][0].detach().cpu()
+            pred_boxes = final_outputs['pred_boxes'][0].detach().cpu()
+            pred_masks = final_outputs['pred_masks'][0].detach().cpu()
+
+        filtered_masks, filtered_scores, _ = apply_sam3_nms(
+            pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
+            prob_threshold=0.3, nms_iou_threshold=0.7
+        )
+    
+    lora_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    if len(filtered_masks) > 0:
+        upsampled_masks = torch.nn.functional.interpolate(
+            filtered_masks.unsqueeze(1).float(), size=(orig_h, orig_w), mode='bilinear', align_corners=False
+        ).squeeze(1)
+        for m in (upsampled_masks > 0.5).numpy():
+            lora_mask_combined = np.maximum(lora_mask_combined, m.astype(np.uint8))
+            
+    lora_predictions[img_id] = {
+        "mask": lora_mask_combined,
+        "detections": len(filtered_masks)
+    }
+
+# -------------------------------------------------------------------------
+# ---- 4. CALCULATE METRICS, LOG DATA & PLOT 2x2 GRID
+# -------------------------------------------------------------------------
+print("\nGenerating 2x2 plots and calculating raw metrics...")
+
+for img_id in image_ids:
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    # Ground Truth Mask
+    ann_ids = coco_gt.getAnnIds(imgIds=img_id)
+    anns = coco_gt.loadAnns(ann_ids)
+    gt_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    for ann in anns:
+        gt_mask_combined = np.maximum(gt_mask_combined, coco_gt.annToMask(ann))
+        
+    base_mask = base_predictions[img_id]["mask"]
+    lora_mask = lora_predictions[img_id]["mask"]
+    
+    # Calculate Pixel Metrics
+    b_tp, b_fp, b_fn, b_iou, b_prec, b_rec = calculate_pixel_metrics(base_mask, gt_mask_combined)
+    l_tp, l_fp, l_fn, l_iou, l_prec, l_rec = calculate_pixel_metrics(lora_mask, gt_mask_combined)
+    
+    # Append to Pandas Data list
+    metrics_data.append({
+        "Image_ID": img_id,
+        "File_Name": img_info["file_name"],
+        "GT_Tubule_Count": len(anns),
+        "Base_Detections": base_predictions[img_id]["detections"],
+        "LoRA_Detections": lora_predictions[img_id]["detections"],
+        "Base_TP_Pixels": b_tp, "Base_FP_Pixels": b_fp, "Base_FN_Pixels": b_fn,
+        "LoRA_TP_Pixels": l_tp, "LoRA_FP_Pixels": l_fp, "LoRA_FN_Pixels": l_fn,
+        "Base_Pixel_IoU": b_iou, "Base_Precision": b_prec, "Base_Recall": b_rec,
+        "LoRA_Pixel_IoU": l_iou, "LoRA_Precision": l_prec, "LoRA_Recall": l_rec
+    })
+
+    # Plot 2x2 Grid
+    fig, axes = plt.subplots(2, 2, figsize=(14, 14))
+    
+    # Top Left: Raw
+    axes[0, 0].imshow(pil_image)
+    axes[0, 0].set_title(f"Image #{img_id} (Raw PAS)", fontsize=12, fontweight="bold")
+    axes[0, 0].axis("off")
+    
+    # Top Right: Ground Truth
+    axes[0, 1].imshow(pil_image)
+    axes[0, 1].imshow(gt_mask_combined, cmap="Greens", alpha=0.45)
+    axes[0, 1].set_title(f"Ground Truth ({len(anns)} Tubules)", fontsize=12, fontweight="bold")
+    axes[0, 1].axis("off")
+    
+    # Bottom Left: Base Model
+    axes[1, 0].imshow(pil_image)
+    axes[1, 0].imshow(base_mask, cmap="Blues", alpha=0.45)
+    axes[1, 0].set_title(f"Zero-Shot Base SAM-3 (IoU: {b_iou:.2f})", fontsize=12, fontweight="bold")
+    axes[1, 0].axis("off")
+    
+    # Bottom Right: LoRA Model
+    axes[1, 1].imshow(pil_image)
+    axes[1, 1].imshow(lora_mask, cmap="Reds", alpha=0.45)
+    axes[1, 1].set_title(f"Fine-Tuned SAM-3 LoRA (IoU: {l_iou:.2f})", fontsize=12, fontweight="bold")
+    axes[1, 1].axis("off")
+
+    plt.tight_layout()
+    save_file = OUTPUT_DIR / f"grid_comparison_{img_id}.png"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    plt.close()
+
+# -------------------------------------------------------------------------
+# ---- 5. EXPORT PANDAS DATAFRAME
+# -------------------------------------------------------------------------
+df = pd.DataFrame(metrics_data)
+csv_path = OUTPUT_DIR / "evaluation_metrics_summary.csv"
+df.to_csv(csv_path, index=False)
+
+print(f"\n✅ All 2x2 images and metrics saved to: {OUTPUT_DIR}")
+print(f"📊 Statistical dataset exported to: {csv_path.name}")
+
+# %%% out
+
+    # C:\Users\User\miniconda3\envs\env_6\Lib\site-packages\tqdm\auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+    #   from .autonotebook import tqdm as notebook_tqdm
+    # Loading COCO annotations...
+    # loading annotations into memory...
+    # Done (t=0.06s)
+    # creating index...
+    # index created!
+    
+    # Building BASE SAM-3 model (Zero-Shot)...
+    # Running BASE inference on 10 images...
+    # c:\code\dl\explore_dl.py:1494: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+    #   with torch.cuda.amp.autocast():
+    
+    # Injecting LoRA weights into the model...
+    # Replaced 37 nn.MultiheadAttention modules with MultiheadAttentionLoRA
+    # Applied LoRA to 314 modules:
+    #   - backbone.vision_backbone.trunk.blocks.0.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.0.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.0.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.0.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.1.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.1.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.1.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.1.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.2.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.2.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.2.mlp.fc1
+    #   - backbone.vision_backbone.trunk.blocks.2.mlp.fc2
+    #   - backbone.vision_backbone.trunk.blocks.3.attn.qkv
+    #   - backbone.vision_backbone.trunk.blocks.3.attn.proj
+    #   - backbone.vision_backbone.trunk.blocks.3.mlp.fc1
+    # and 299 more
+    # Loaded LoRA weights from F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt
+    # Running LoRA inference on 10 images...
+    # c:\code\dl\explore_dl.py:1559: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+    #   with torch.cuda.amp.autocast():
+    
+    # Generating 2x2 plots and calculating raw metrics...
+    
+    # ✅ All 2x2 images and metrics saved to: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_and_metrics
+    # 📊 Statistical dataset exported to: evaluation_metrics_summary.csv
+
+#=======================
+
+# this was also tested with : query : 'abcd'  =>  saved in : 
+        # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\query_abcd
+
 # %%'
 
+"""
+SAM-3 Hybrid Evaluation: Base AMG vs. Fine-Tuned LoRA
+Generates 2x2 comparisons and a Pandas DataFrame of raw pixel metrics.
+"""
+
+import sys
+import os
+import gc
+from pathlib import Path
+import yaml
+import torch
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
+from torchvision.transforms import v2
+from pycocotools.coco import COCO
+from pycocotools import mask as mask_utils
+
+# SPYDER FIX
+PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
+sys.path.append(str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
+
+# Import HuggingFace pipeline for the Base AMG Pass
+from transformers import pipeline
+
+# Import native SAM3 for the LoRA Pass
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.model_misc import SAM3Output
+from sam3.train.data.sam3_image_dataset import Datapoint, Image, FindQueryLoaded, InferenceMetadata
+from sam3.train.data.collator import collate_fn_api
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from validate_sam3_lora import apply_sam3_nms, move_to_device
+
+# -------------------------------------------------------------------------
+# ---- CONFIGURATION
+# -------------------------------------------------------------------------
+CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
+WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
+TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
+OUTPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_and_metrics")
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def calculate_pixel_metrics(pred_mask, gt_mask):
+    """Calculates pixel-level precision, recall, and IoU."""
+    pred_bool = pred_mask > 0
+    gt_bool = gt_mask > 0
+    
+    tp = np.logical_and(pred_bool, gt_bool).sum()
+    fp = np.logical_and(pred_bool, np.logical_not(gt_bool)).sum()
+    fn = np.logical_and(np.logical_not(pred_bool), gt_bool).sum()
+    
+    iou = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    
+    return int(tp), int(fp), int(fn), float(iou), float(precision), float(recall)
 
 
+
+def calculate_iou(mask1, mask2):
+    """Calculates the Intersection over Union (overlap percentage) between two boolean masks."""
+    intersection = np.logical_and(mask1, mask2).sum()
+    if intersection == 0:
+        return 0.0
+    union = np.logical_or(mask1, mask2).sum()
+    return intersection / union
+
+# -------------------------------------------------------------------------
+# ---- 1. LOAD ANNOTATIONS
+# -------------------------------------------------------------------------
+print("Loading COCO annotations...")
+coco_json_path = TEST_DIR / "_annotations.coco.json"
+if not coco_json_path.exists():
+    coco_json_path = list(TEST_DIR.glob("*.json"))[0]
+
+coco_gt = COCO(str(coco_json_path))
+image_ids = coco_gt.getImgIds()
+
+base_predictions = {}
+lora_predictions = {}
+metrics_data = []
+
+# -------------------------------------------------------------------------
+# ---- 2. PASS 1: BASE MODEL INFERENCE (AMG PIPELINE)
+# -------------------------------------------------------------------------
+print("\n[PHASE 1] Loading Base SAM-3 AMG Pipeline...")
+generator = pipeline(
+    "mask-generation", 
+    model="facebook/sam3", 
+    device="cuda",
+    dtype=torch.float32
+)
+
+print(f"Running exhaustive AMG inference on {len(image_ids)} images...")
+for img_id in image_ids:
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    # Run Automatic Mask Generator using your specific threshold parameters
+    results = generator(
+        pil_image,
+        points_per_batch=128,         
+        points_per_side=128,          
+        pred_iou_thresh=0.6,         
+        stability_score_thresh=0.65,  
+        crop_n_layers=0,              
+        crop_nms_thresh=0.85,         
+        crop_overlap_ratio=512 / 1500 
+    )
+    
+
+    # ---------------------------------------------------------
+    # --- PHASE 1.5: ADVANCED FILTERING & NOISE REDUCTION ---
+    # ---------------------------------------------------------
+    MIN_PIXEL_AREA = 5000 
+    MAX_OVERLAP_IOU = 0.20
+    image_area = orig_h * orig_w
+    
+    # 1. Size Filter
+    valid_masks = []
+    for mask_tensor in results["masks"]:
+        mask_bool = mask_tensor.cpu().numpy().astype(bool)
+        mask_bool = np.squeeze(mask_bool)
+        if np.sum(mask_bool) >= MIN_PIXEL_AREA:
+            valid_masks.append(mask_bool)
+
+    # 2. Duplicate Overlap Filter (Custom NMS)
+    valid_masks.sort(key=np.sum, reverse=True)
+    final_unique_masks = []
+    
+    for current_mask in valid_masks:
+        is_duplicate = False
+        for approved_mask in final_unique_masks:
+            if calculate_iou(current_mask, approved_mask) > MAX_OVERLAP_IOU:
+                is_duplicate = True
+                break 
+                
+        if not is_duplicate:
+            # 3. Background Artifact Filter
+            # If the mask covers > 30% of the image, skip it!
+            if np.sum(current_mask) <= (image_area * 0.30):
+                final_unique_masks.append(current_mask)
+                
+    # Combine the surviving filtered masks into a single array
+    base_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    for mask_bool in final_unique_masks:
+        base_mask_combined = np.maximum(base_mask_combined, mask_bool.astype(np.uint8))
+        
+    base_predictions[img_id] = {
+        "mask": base_mask_combined,
+        "detections": len(final_unique_masks)
+    }
+
+# Memory Cleanup: Delete the HF Pipeline so we don't run out of GPU memory
+print("\nCleaning up GPU memory before Phase 2...")
+del generator
+torch.cuda.empty_cache()
+gc.collect()
+
+# -------------------------------------------------------------------------
+# ---- 3. PASS 2: LORA MODEL INFERENCE (NATIVE ARCHITECTURE)
+# -------------------------------------------------------------------------
+print("\n[PHASE 2] Loading Native SAM-3 & Injecting LoRA...")
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+model = build_sam3_image_model(
+    device=device.type, compile=False, load_from_HF=True, 
+    bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
+)
+
+lora_cfg = config["lora"]
+lora_config = LoRAConfig(
+    rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], dropout=lora_cfg["dropout"],
+    target_modules=lora_cfg["target_modules"], apply_to_vision_encoder=lora_cfg["apply_to_vision_encoder"],
+    apply_to_text_encoder=lora_cfg["apply_to_text_encoder"], apply_to_geometry_encoder=lora_cfg["apply_to_geometry_encoder"],
+    apply_to_detr_encoder=lora_cfg["apply_to_detr_encoder"], apply_to_detr_decoder=lora_cfg["apply_to_detr_decoder"],
+    apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"]
+)
+
+model = apply_lora_to_model(model, lora_config)
+load_lora_weights(model, str(WEIGHTS_PATH))
+model.to(device)
+model.eval()
+
+transform = v2.Compose([
+    v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+print(f"Running fine-tuned LoRA inference on {len(image_ids)} images...")
+for img_id in image_ids:
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    image_tensor = transform(resized_image)
+    image_obj = Image(data=image_tensor, objects=[], size=(1008, 1008))
+    query = FindQueryLoaded(query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True, query_processing_order=0, inference_metadata=InferenceMetadata(coco_image_id=img_id, original_image_id=img_id, original_category_id=0, original_size=(orig_h, orig_w), object_id=-1, frame_index=-1))
+    datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
+    batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    input_batch = move_to_device(batch_dict["input"], device)
+
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs_list = model(input_batch)
+        with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
+            final_outputs = list(outputs_iter)[-1][-1]
+            pred_logits = final_outputs['pred_logits'][0].detach().cpu()
+            pred_boxes = final_outputs['pred_boxes'][0].detach().cpu()
+            pred_masks = final_outputs['pred_masks'][0].detach().cpu()
+
+        filtered_masks, filtered_scores, _ = apply_sam3_nms(
+            pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
+            prob_threshold=0.3, nms_iou_threshold=0.7
+        )
+    
+    lora_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    if len(filtered_masks) > 0:
+        upsampled_masks = torch.nn.functional.interpolate(
+            filtered_masks.unsqueeze(1).float(), size=(orig_h, orig_w), mode='bilinear', align_corners=False
+        ).squeeze(1)
+        for m in (upsampled_masks > 0.5).numpy():
+            lora_mask_combined = np.maximum(lora_mask_combined, m.astype(np.uint8))
+            
+    lora_predictions[img_id] = {
+        "mask": lora_mask_combined,
+        "detections": len(filtered_masks)
+    }
+
+# -------------------------------------------------------------------------
+# ---- 4. CALCULATE METRICS, LOG DATA & PLOT 2x2 GRID
+# -------------------------------------------------------------------------
+print("\n[PHASE 3] Generating 2x2 plots and exporting statistics...")
+
+for img_id in image_ids:
+    img_info = coco_gt.loadImgs(img_id)[0]
+    img_path = TEST_DIR / img_info["file_name"]
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    
+    # Ground Truth Mask
+    ann_ids = coco_gt.getAnnIds(imgIds=img_id)
+    anns = coco_gt.loadAnns(ann_ids)
+    gt_mask_combined = np.zeros((orig_h, orig_w), dtype=np.uint8)
+    for ann in anns:
+        gt_mask_combined = np.maximum(gt_mask_combined, coco_gt.annToMask(ann))
+        
+    base_mask = base_predictions[img_id]["mask"]
+    lora_mask = lora_predictions[img_id]["mask"]
+    
+    # Calculate Pixel Metrics
+    b_tp, b_fp, b_fn, b_iou, b_prec, b_rec = calculate_pixel_metrics(base_mask, gt_mask_combined)
+    l_tp, l_fp, l_fn, l_iou, l_prec, l_rec = calculate_pixel_metrics(lora_mask, gt_mask_combined)
+    
+    # Append to Pandas Data list
+    metrics_data.append({
+        "Image_ID": img_id, "File_Name": img_info["file_name"],
+        "GT_Tubule_Count": len(anns),
+        "Base_AMG_Detections": base_predictions[img_id]["detections"],
+        "LoRA_Detections": lora_predictions[img_id]["detections"],
+        "Base_TP_Pixels": b_tp, "Base_FP_Pixels": b_fp, "Base_FN_Pixels": b_fn,
+        "LoRA_TP_Pixels": l_tp, "LoRA_FP_Pixels": l_fp, "LoRA_FN_Pixels": l_fn,
+        "Base_Pixel_IoU": b_iou, "Base_Precision": b_prec, "Base_Recall": b_rec,
+        "LoRA_Pixel_IoU": l_iou, "LoRA_Precision": l_prec, "LoRA_Recall": l_rec
+    })
+
+    # Plot 2x2 Grid
+    fig, axes = plt.subplots(2, 2, figsize=(14, 14))
+    
+    axes[0, 0].imshow(pil_image)
+    axes[0, 0].set_title(f"Image #{img_id} (Raw PAS)", fontsize=14, fontweight="bold")
+    axes[0, 0].axis("off")
+    
+    axes[0, 1].imshow(pil_image)
+    axes[0, 1].imshow(gt_mask_combined, cmap="Greens", alpha=0.45)
+    axes[0, 1].set_title(f"Ground Truth ({len(anns)} Tubules)", fontsize=14, fontweight="bold")
+    axes[0, 1].axis("off")
+    
+    axes[1, 0].imshow(pil_image)
+    axes[1, 0].imshow(base_mask, cmap="Blues", alpha=0.45)
+    axes[1, 0].set_title(f"Base SAM-3 AMG Baseline (IoU: {b_iou:.2f})", fontsize=14, fontweight="bold")
+    axes[1, 0].axis("off")
+    
+    axes[1, 1].imshow(pil_image)
+    axes[1, 1].imshow(lora_mask, cmap="Reds", alpha=0.45)
+    axes[1, 1].set_title(f"Fine-Tuned SAM-3 LoRA (IoU: {l_iou:.2f})", fontsize=14, fontweight="bold")
+    axes[1, 1].axis("off")
+
+    plt.tight_layout()
+    save_file = OUTPUT_DIR / f"hybrid_comparison_{img_id}.png"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    plt.close()
+
+# -------------------------------------------------------------------------
+# ---- 5. EXPORT PANDAS DATAFRAME
+# -------------------------------------------------------------------------
+df = pd.DataFrame(metrics_data)
+csv_path = OUTPUT_DIR / "hybrid_evaluation_metrics_summary.csv"
+df.to_csv(csv_path, index=False)
+
+print(f"\n✅ All 2x2 images saved to: {OUTPUT_DIR}")
+print(f"📊 Statistical dataset exported to: {csv_path.name}")
+
+# %%
 
