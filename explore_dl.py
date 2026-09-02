@@ -669,7 +669,7 @@ for geo_path in geojson_files:
 print("\n" + "-"*50)
 print("Binary mask generation complete! The dataset is ready for LoRA training.")
 
-# %% crop
+# %% 1024 × 1024  _  crop
 
 # this crops all images ( original & black-&-white masks ) to the stanrdard 1024 * 1024 dimmensions.
 
@@ -1094,9 +1094,12 @@ plt.savefig(save_path)
 # Display the graph on your screen
 plt.show()
 
-# %% visual evaluation
+# %% not needed  _  visual evaluation  _  3-panel
 
 """
+not needed : 
+    this does not evaluate the base-SAM-3 !
+
 SAM-3 LoRA Visual Evaluation Pipeline
 -------------------------------------
 This script loads a base SAM-3 model, injects custom LoRA weights, and runs
@@ -1379,9 +1382,11 @@ print(f"\n✅ All visual results successfully saved in: {OUTPUT_VIS_DIR}")
     
     # ✅ All visual results successfully saved in: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\vis_eval
 
-# %% evaluation _ query _ LoRA , SAM-3
+# %% evaluation _ text query _ LoRA , SAM-3
 
 """
+SAM-3 : instead of AMG ( automatic mask generation ), it uses text query.
+
 SAM-3 LoRA: 4-Panel Visual Evaluation & Raw Metrics Logger
 Generates 2x2 comparisons and a Pandas DataFrame for statistical testing.
 """
@@ -1715,10 +1720,11 @@ print(f"📊 Statistical dataset exported to: {csv_path.name}")
 # this was also tested with : query : 'abcd'  =>  saved in : 
         # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\output\2026-08-20\query_abcd
 
-# %%'
+# %% comparison : original SAM-3 versus LoRA
 
 """
-SAM-3 Hybrid Evaluation: Base AMG vs. Fine-Tuned LoRA
+SAM-3 Hybrid Evaluation: SAM-3 Base AMG vs. Fine-Tuned LoRA
+AMG ( automatic mask generation )( = C:\code\DL\dl.py  |  sam-3 / geometry ) 
 Generates 2x2 comparisons and a Pandas DataFrame of raw pixel metrics.
 """
 
@@ -1822,6 +1828,7 @@ for img_id in image_ids:
     orig_w, orig_h = pil_image.size
     
     # Run Automatic Mask Generator using your specific threshold parameters
+    #---- .     Hyperparameter optimization.
     results = generator(
         pil_image,
         points_per_batch=128,         
@@ -1835,7 +1842,7 @@ for img_id in image_ids:
     
 
     # ---------------------------------------------------------
-    # --- PHASE 1.5: ADVANCED FILTERING & NOISE REDUCTION ---
+    # ---- 2.5 : ADVANCED FILTERING & NOISE REDUCTION ---
     # ---------------------------------------------------------
     MIN_PIXEL_AREA = 5000 
     MAX_OVERLAP_IOU = 0.20
@@ -2029,5 +2036,489 @@ df.to_csv(csv_path, index=False)
 print(f"\n✅ All 2x2 images saved to: {OUTPUT_DIR}")
 print(f"📊 Statistical dataset exported to: {csv_path.name}")
 
-# %%
+# %% KPMP
+
+import pandas as pd
+import os
+
+# Define the file path
+file_path = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\atlas_repository_filelist-20260824.csv'
+
+# Read the CSV file
+try:
+    df = pd.read_csv(file_path)
+    print("✓ File successfully loaded!")
+except FileNotFoundError:
+    print(f"Error: File not found at {file_path}")
+    exit()
+except Exception as e:
+    print(f"Error reading file: {e}")
+    exit()
+
+# Get general information about the dataframe
+print("\n" + "="*50)
+print("GENERAL INFORMATION ABOUT THE DATAFRAME")
+print("="*50)
+
+# 1. Basic info
+print(f"\n📊 Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+
+print("="*50)
+
+# 2. Column names
+print(f"\n📋 Columns ({len(df.columns)} total):")
+for i, col in enumerate(df.columns, 1):
+    print(f"  {i}. {col}")
+
+print("="*50)
+
+# 3. Data types
+print(f"\n🔤 Data types:")
+print(df.dtypes)
+
+print("="*50)
+# 4. First few rows
+print(f"\n👀 First 5 rows:")
+print(df.head())
+
+print("="*50)
+
+# 5. Last few rows
+print(f"\n👀 Last 5 rows:")
+print(df.tail())
+
+print("="*50)
+
+
+# 6. Summary statistics for numeric columns
+print(f"\n📈 Summary statistics for numeric columns:")
+print(df.describe())
+
+print("="*50)
+
+# 7. Missing values
+print(f"\n❓ Missing values per column:")
+print(df.isnull().sum())
+
+print("="*50)
+
+# 8. Memory usage
+print(f"\n💾 Memory usage: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+
+print("="*50)
+
+# 9. Unique values count for each column (showing first few)
+print(f"\n🔢 Unique values count (first 5 columns shown):")
+for col in df.columns[:5]:
+    print(f"  {col}: {df[col].nunique()} unique values")
+
+print("="*50)
+
+# Save as Excel file in the same directory
+directory = os.path.dirname(file_path)
+excel_filename = os.path.splitext(os.path.basename(file_path))[0] + '.xlsx'
+excel_path = os.path.join(directory, excel_filename)
+
+# Save to Excel
+try:
+    df.to_excel(excel_path, index=False, engine='openpyxl')
+    print(f"\n✅ Excel file saved successfully at:")
+    print(f"   {excel_path}")
+except Exception as e:
+    print(f"\n❌ Error saving Excel file: {e}")
+    print("   Make sure you have openpyxl installed: pip install openpyxl")
+
+
+# %%% out 
+
+'''
+
+    ✓ File successfully loaded!
+    
+    ==================================================
+    GENERAL INFORMATION ABOUT THE DATAFRAME
+    ==================================================
+    
+    📊 Shape: 10000 rows × 11 columns
+    ==================================================
+    
+    📋 Columns (11 total):
+      1. Access
+      2. Platform
+      3. Data Format
+      4. Data Category
+      5. Size
+      6. File Name
+      7. Internal Package ID
+      8. Experimental Strategy
+      9. Workflow Type
+      10. Participant ID
+      11. DOIs
+    ==================================================
+    
+    🔤 Data types:
+    Access                   str
+    Platform                 str
+    Data Format              str
+    Data Category            str
+    Size                     str
+    File Name                str
+    Internal Package ID      str
+    Experimental Strategy    str
+    Workflow Type            str
+    Participant ID           str
+    DOIs                     str
+    dtype: object
+    ==================================================
+    
+    👀 First 5 rows:
+           Access      Platform  ... Participant ID                DOIs
+    0        open  10x Genomics  ...       34-10184  10.48698/16dd-vj20
+    1        open      Hyperion  ...       29-10277                 NaN
+    2  controlled    HiSeq 4000  ...       29-10006                 NaN
+    3        open           NaN  ...       30-10018                 NaN
+    4  controlled  10x Genomics  ...      933-10010  10.48698/16dd-vj20
+    
+    [5 rows x 11 columns]
+    ==================================================
+    
+    👀 Last 5 rows:
+              Access  ...                DOIs
+    9995  controlled  ...                 NaN
+    9996  controlled  ...                 NaN
+    9997  controlled  ...                 NaN
+    9998        open  ...  10.48698/16dd-vj20
+    9999        open  ...  10.48698/16dd-vj20
+    
+    [5 rows x 11 columns]
+    ==================================================
+    
+    📈 Summary statistics for numeric columns:
+           Access      Platform  ... Participant ID                DOIs
+    count   10000          5957  ...          10000                2183
+    unique      2            26  ...            771                  16
+    top      open  10x Genomics  ...          D_080  10.48698/16dd-vj20
+    freq     5758          2090  ...             63                1662
+    
+    [4 rows x 11 columns]
+    ==================================================
+    
+    ❓ Missing values per column:
+    Access                      0
+    Platform                 4043
+    Data Format                 0
+    Data Category               0
+    Size                        0
+    File Name                   0
+    Internal Package ID         0
+    Experimental Strategy       0
+    Workflow Type            4868
+    Participant ID              0
+    DOIs                     7817
+    dtype: int64
+    ==================================================
+    
+    💾 Memory usage: 6.74 MB
+    ==================================================
+    
+    🔢 Unique values count (first 5 columns shown):
+      Access: 2 unique values
+      Platform: 26 unique values
+      Data Format: 35 unique values
+      Data Category: 3 unique values
+      Size: 3072 unique values
+    ==================================================
+    
+    ✅ Excel file saved successfully at:
+       F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\atlas_repository_filelist-20260824.xlsx
+
+'''
+
+# %%% svs
+
+df['Data Format'].unique()
+'''
+    Out[4]: 
+    <StringArray>
+    [            'tsv mtx',         'tif csv svs',               'fastq',
+                     'svs',                 'bam',                'xlsx',
+               'cram crai',                 'csv',          'peaks .xls',
+                'gvcf tbi',                 'tif',          'h5 tsv mtx',
+     'tif xml xlsx svs md',              'h5 tsv',       'ibd imzML tif',
+     'h5 jpg csv png json',                 'raw',                 'zip',
+                  'cloupe',             'obx tif',             'tsv txt',
+              '.broadPeak',                 '.bw',        'czi tif json',
+                 'tif csv',                 'txt',             'ibf csv',
+                 'vcf tbi',           '.bedGraph',            'h5Seurat',
+             '.narrowPeak',            'xlsx pdf',           'xlsx docx',
+           'xlsx docx pdf',              'fa fai']
+    Length: 35, dtype: str
+'''
+
+svs_bool = df['Data Format'].str.contains('svs', case=False)
+svs_values = df['Data Format'][ svs_bool ].unique()
+svs_values
+    # Out[8]: 
+    # <StringArray>
+    # ['tif csv svs', 'svs', 'tif xml xlsx svs md']
+    # Length: 3, dtype: str
+
+df_svs = df[svs_bool]
+df_svs.shape
+    # Out[12]: (3130, 11)
+
+
+df_svs['Data Format'].value_counts()
+    # Out[13]: 
+    # Data Format
+    # svs                    2937
+    # tif xml xlsx svs md     154
+    # tif csv svs              39
+    # Name: count, dtype: int64
+
+#--------------------------------------
+pickle_path = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\KPMP_svs+.pkl'
+df_svs.to_pickle( pickle_path )
+df_svs_plus = df_svs.copy()
+#--------------------------------------
+
+only_svs = df_svs['Data Format'] == 'svs'
+df_svs = df_svs[ only_svs ]
+df_svs.shape
+    # Out[19]: (2937, 11)
+
+#--------------------------------------
+pickle_path = r'F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\KPMP_svs.pkl'
+# df_svs.to_pickle( pickle_path )
+df_svs = pd.read_pickle( pickle_path )
+#--------------------------------------
+
+df_svs.head()
+    # Out[22]: 
+    #    Access Platform Data Format  ...     Workflow Type Participant ID DOIs
+    # 3    open      NaN         svs  ...         TOL stain       30-10018  NaN
+    # 9    open      NaN         svs  ...  Frozen H&E stain       31-10090  NaN
+    # 11   open      NaN         svs  ...         H&E stain       29-10008  NaN
+    # 15   open      NaN         svs  ...         TRI stain       34-10730  NaN
+    # 21   open      NaN         svs  ...         PAS stain       31-10943  NaN
+    
+    # [5 rows x 11 columns]
+
+#====================================
+
+df_svs['Workflow Type'].value_counts()
+    '''
+        Out[6]: 
+        Workflow Type
+        H&E stain           575
+        SIL stain           563
+        TRI stain           542
+        PAS stain           541
+        TOL stain           378
+        Frozen H&E stain    321
+        Other stain          17
+        Name: count, dtype: int64
+    '''
+
+list(df_svs.columns)
+    '''
+        ['Access',
+         'Platform',
+         'Data Format',
+         'Data Category',
+         'Size',
+         'File Name',
+         'Internal Package ID',
+         'Experimental Strategy',
+         'Workflow Type',
+         'Participant ID',
+         'DOIs']
+    '''
+
+
+
+df_svs[['Data Format', 'Data Category', 'Size', 'Experimental Strategy','Workflow Type']].head()
+    '''
+        Out[11]: 
+           Data Format Data Category     Size                 Experimental Strategy     Workflow Type
+        3          svs     Pathology  63.6 MB  Light Microscopic Whole Slide Images         TOL stain
+        9          svs     Pathology    56 MB  Light Microscopic Whole Slide Images  Frozen H&E stain
+        11         svs     Pathology  96.4 MB  Light Microscopic Whole Slide Images         H&E stain
+        15         svs     Pathology  19.9 MB  Light Microscopic Whole Slide Images         TRI stain
+        21         svs     Pathology   691 MB  Light Microscopic Whole Slide Images         PAS stain
+    '''
+
+#====================================
+
+mask_PAS = df_svs['Workflow Type'] == 'PAS stain'
+df_svs_PAS = df_svs[ mask_PAS ]
+df_svs_PAS.shape
+    # Out[6]: (541, 11)
+
+
+# note in this .csv file,  file-name = wen-repo-UUId + _ + web-repo-filename .
+df_svs_PAS.iloc[ :5 , :6 ]
+    # Out[11]: 
+    #    Access Platform Data Format Data Category     Size                                                        File Name
+    # 21   open      NaN         svs     Pathology   691 MB  571cd693-92b4-4a59-94af-444864967d2c_S-2407-010708_PAS_2of2.svs
+    # 34   open      NaN         svs     Pathology    87 MB  1981e918-d8d5-4951-83d1-45a8fce9fc09_S-2010-012948_PAS_2of2.svs
+    # 42   open      NaN         svs     Pathology   788 MB  8753c2d8-c689-4c75-b609-1518b54a18ad_S-2506-003059_PAS_1of2.svs
+    # 53   open      NaN         svs     Pathology  85.7 MB  1be11a7a-e4e4-46d2-b451-79198c5546d6_S-2102-003404_PAS_2of2.svs
+    # 83   open      NaN         svs     Pathology   507 MB  729a4bcd-0c16-4030-9f4f-0c329bb3e7cc_S-2503-004782_PAS_2of2.svs
+
+df_svs_PAS.iloc[ :5 , 6: ]
+    # Out[12]: 
+    #                      Internal Package ID                 Experimental Strategy Workflow Type Participant ID DOIs
+    # 21  b0e7631c-c92c-4949-8509-8d5892e40109  Light Microscopic Whole Slide Images     PAS stain       31-10943  NaN
+    # 34  63ee04bc-6eef-460f-af2d-065bc2186e1e  Light Microscopic Whole Slide Images     PAS stain       32-10296  NaN
+    # 42  d6c4d6fe-1598-4081-ab8d-20f4afa08243  Light Microscopic Whole Slide Images     PAS stain       29-11755  NaN
+    # 53  9c4c4a74-6291-4fa9-824f-4d33a6ef0197  Light Microscopic Whole Slide Images     PAS stain       34-10240  NaN
+    # 83  dc9951b8-2700-4392-a00f-2769a2493272  Light Microscopic Whole Slide Images     PAS stain       27-10774  NaN
+
+
+df_svs_PAS['Access'].value_counts()
+    # Out[13]: 
+    # Access
+    # open    541
+    # Name: count, dtype: int64
+
+# %%% repeatition
+
+counts = df_svs_PAS['Participant ID'].value_counts()
+print(f"Total Unique Patients: {len(counts)}")
+print(f"Patients with 1 file: {(counts == 1).sum()}")
+print(f"Patients with >1 file: {(counts > 1).sum()}")
+print(f"Max files for a single patient: {counts.max()}")
+
+    '''
+        Total Unique Patients: 425
+        Patients with 1 file: 315
+        Patients with >1 file: 110
+        Max files for a single patient: 3
+    '''
+
+# %%% Histogram of size
+
+import re
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def parse_size_to_mb(size_str):
+    if pd.isna(size_str):
+        return None
+    match = re.match(r'([\d.]+)\s*([KMGT]?B)', str(size_str).strip(), re.IGNORECASE)
+    if not match:
+        return None
+    value, unit = match.groups()
+    value = float(value)
+    unit = unit.upper()
+
+    multipliers = {
+        'B': 1 / (1024 ** 2),
+        'KB': 1 / 1024,
+        'MB': 1,
+        'GB': 1024,
+        'TB': 1024 ** 2,
+    }
+    return value * multipliers.get(unit, None)
+
+# Create a numeric column (in MB)
+df_svs_PAS['Size_MB'] = df_svs_PAS['Size'].apply(parse_size_to_mb)
+
+# Plot histogram
+plt.figure(figsize=(8, 5))
+plt.hist(df_svs_PAS['Size_MB'].dropna(), bins=30, edgecolor='black')
+plt.xlabel('Size (MB)')
+plt.ylabel('Frequency')
+plt.title('df_svs_PAS \n Distribution of File Sizes')
+plt.tight_layout()
+plt.show()
+
+
+plt.savefig( r'F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\file_size.pdf' )
+
+
+# %%% download data
+
+# this downloads 100 random files from unique patient-IDs from the KPMP repository.
+
+
+import pandas as pd
+import requests
+import os
+from tqdm import tqdm
+
+# --- CONFIGURATION ---
+DOWNLOAD_DIR = r"D:\KPMP\unique_patients_random_100"
+NUMBER_OF_FILES = 100 # number f random files to extract from the dataset.
+API_PREFIX = "https://atlas.kpmp.org/api/v1/file/download" 
+
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+# --- 1. STRICT PATIENT-LEVEL DEDUPLICATION ---
+
+# Step 1: Shuffle the entire dataframe so the "first" file is random
+df_shuffled = df_svs_PAS.sample(frac=1, random_state=42)
+
+# Step 2: Drop duplicates based on Participant ID, keeping only the first occurrence
+df_unique_patients = df_shuffled.drop_duplicates(subset=['Participant ID'], keep='first')
+
+# Step 3: Sample exactly 100 unique patients
+df_final = df_unique_patients.head(NUMBER_OF_FILES)
+
+# Save the precise metadata for these 100 files to the download directory
+metadata_export_path = os.path.join( DOWNLOAD_DIR, "selected_100_metadata.pkl" )
+df_final.to_pickle( metadata_export_path )
+
+print(f"Original svs-PAS files in CSV: {len(df_svs_PAS)}")
+print(f"Total unique patients available: {len(df_unique_patients)}")
+print(f"Selected strictly isolated patients: {len(df_final)}\n")
+
+# --- 2. AUTOMATED DOWNLOAD LOOP ---
+for index, row in df_final.iterrows():
+    package_id = row['Internal Package ID']
+    file_name = row['File Name']
+    participant_id = row['Participant ID']
+    
+    download_url = f"{API_PREFIX}/{package_id}/{file_name}"
+    save_path = os.path.join(DOWNLOAD_DIR, file_name)
+    
+    if os.path.exists(save_path):
+        print(f"[{file_name}] (Patient: {participant_id}) already exists. Skipping.")
+        continue
+
+    print(f"\nDownloading: file : {index}  ,  {file_name}  (Patient: {participant_id})")
+    
+    try:
+        response = requests.get(download_url, stream=True)
+        response.raise_for_status() 
+        
+        total_size_in_bytes = int(response.headers.get('content-length', 0))
+        block_size = 1024 * 1024 
+        
+        with open(save_path, 'wb') as file, tqdm(
+                desc="Progress",
+                total=total_size_in_bytes,
+                unit='iB',
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as progress_bar:
+            for data in response.iter_content(block_size):
+                file.write(data)
+                progress_bar.update(len(data))
+                
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to download {file_name}. Error: {e}")
+
+print(f"\n✅ All {NUMBER_OF_FILES} strictly independent WSI downloads complete!")
+
+# %%%% out
+
+    # ...
+    # Downloading: file : 921  ,  f3503de1-354e-4c06-8b5c-b67c3df9c387_S-2203-016179_PAS_2of2.svs  (Patient: 27-10156)
+    # Progress: 53.3MiB [00:07, 7.36MiB/s]
+    # ✅ All 100 strictly independent WSI downloads complete!
+
+# %%'
+
 
