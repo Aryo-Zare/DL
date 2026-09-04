@@ -2519,6 +2519,290 @@ print(f"\n✅ All {NUMBER_OF_FILES} strictly independent WSI downloads complete!
     # Progress: 53.3MiB [00:07, 7.36MiB/s]
     # ✅ All 100 strictly independent WSI downloads complete!
 
+
+# %%% 1024 × 1024  _  crop _ rename _ KPMP
+
+import os
+from pathlib import Path
+from PIL import Image
+
+# --- CONFIGURATION ---
+INPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\crop")
+OUTPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\crop_1024")
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- PROCESSING LOOP ---
+print(f"Scanning {INPUT_DIR} for PNG files...\n")
+processed_count = 0
+
+for file_path in INPUT_DIR.glob("*.png"):
+    # 1. Clean the Filename
+    old_name = file_path.stem  # Gets the filename without the '.png' extension
+    
+    # Split at the space + open parenthesis " (" and keep only the first part
+    if " (" in old_name:
+        clean_hash = old_name.split(" (")[0]
+    else:
+        clean_hash = old_name
+        
+    new_filename = f"{clean_hash}.png"
+    new_file_path = OUTPUT_DIR / new_filename
+    
+    # 2. Enforce Strict 1024x1024 Dimensions
+    try:
+        with Image.open(file_path) as img:
+            w, h = img.size
+            
+            # If the image is 1024x1025 or similar, crop it down
+            if w != 1024 or h != 1024:
+                # crop((left, upper, right, lower))
+                # This safely trims the bottom/right excess pixels
+                img = img.crop((0, 0, 1024, 1024))
+            
+            img.save(new_file_path)
+            processed_count += 1
+            print(f"Saved: {new_filename}")
+            
+    except Exception as e:
+        print(f"Error processing {file_path.name}: {e}")
+
+print(f"\n✅ Successfully cleaned and strictly resized {processed_count} images.")
+print(f"Files saved to: {OUTPUT_DIR}")
+
+# %%% 3-panel visual comparison
+
+import sys
+import os
+import gc
+from pathlib import Path
+import yaml
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image as PILImage
+from torchvision.transforms import v2
+
+# --- 1. SPYDER PATH FIX (From your original script) ---
+PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
+sys.path.append(str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
+
+from transformers import pipeline
+
+# Import your custom native SAM3 and LoRA logic
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.model_misc import SAM3Output
+from sam3.train.data.sam3_image_dataset import Datapoint, Image as SAM3Image, FindQueryLoaded, InferenceMetadata
+from sam3.train.data.collator import collate_fn_api
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from validate_sam3_lora import apply_sam3_nms, move_to_device
+
+# --- 2. CONFIGURATION & PATHS ---
+INPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\crop_1024")
+OUTPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\visual_comparison")
+
+CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
+WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# --- 3. HELPER FUNCTIONS ---
+def calculate_iou(mask1, mask2):
+    intersection = np.logical_and(mask1, mask2).sum()
+    if intersection == 0:
+        return 0.0
+    union = np.logical_or(mask1, mask2).sum()
+    return intersection / union
+
+def blend_masks(image, masks, alpha=0.5):
+    blended = np.array(image).copy()
+    for mask_bool in masks:
+        color = np.random.randint(0, 255, (3,), dtype=np.uint8)
+        blended[mask_bool] = (blended[mask_bool] * (1 - alpha) + color * alpha).astype(np.uint8)
+    return blended
+
+# --- 4. LOAD BASE MODEL ---
+print("Loading Base SAM-3 AMG Pipeline...")
+base_generator = pipeline(
+    "mask-generation", 
+    model="facebook/sam3", 
+    device="cuda",
+    dtype=torch.float32
+)
+
+# --- 5. LOAD CUSTOM LORA MODEL ---
+print("Loading Native SAM-3 & Injecting Custom LoRA...")
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+lora_model = build_sam3_image_model(
+    device=device.type, compile=False, load_from_HF=True, 
+    bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
+)
+
+lora_cfg = config["lora"]
+lora_config = LoRAConfig(
+    rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], dropout=lora_cfg["dropout"],
+    target_modules=lora_cfg["target_modules"], apply_to_vision_encoder=lora_cfg["apply_to_vision_encoder"],
+    apply_to_text_encoder=lora_cfg["apply_to_text_encoder"], apply_to_geometry_encoder=lora_cfg["apply_to_geometry_encoder"],
+    apply_to_detr_encoder=lora_cfg["apply_to_detr_encoder"], apply_to_detr_decoder=lora_cfg["apply_to_detr_decoder"],
+    apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"]
+)
+
+lora_model = apply_lora_to_model(lora_model, lora_config)
+load_lora_weights(lora_model, str(WEIGHTS_PATH))
+lora_model.to(device)
+lora_model.eval()
+
+transform = v2.Compose([
+    v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+# --- 6. INFERENCE & PLOTTING LOOP ---
+image_files = list(INPUT_DIR.glob("*.png"))
+print(f"\nStarting evaluation on {len(image_files)} images...")
+
+for img_id_idx, img_path in enumerate(image_files):
+    print(f"Processing {img_path.name}...")
+    pil_image = PILImage.open(img_path).convert("RGB")
+    orig_w, orig_h = pil_image.size
+    image_area = orig_w * orig_h
+
+    # ==== BASE SAM-3 INFERENCE (With Filtering) ====
+    base_results = base_generator(
+        pil_image, points_per_batch=128, points_per_side=128,          
+        pred_iou_thresh=0.6, stability_score_thresh=0.65,  
+        crop_n_layers=0, crop_nms_thresh=0.85, crop_overlap_ratio=512/1500 
+    )
+    
+    valid_base_masks = []
+    for mask_tensor in base_results["masks"]:
+        mask_bool = np.squeeze(mask_tensor.cpu().numpy().astype(bool))
+        if np.sum(mask_bool) >= 5000:
+            valid_base_masks.append(mask_bool)
+
+    valid_base_masks.sort(key=np.sum, reverse=True)
+    final_base_masks = []
+    for current_mask in valid_base_masks:
+        is_duplicate = False
+        for approved_mask in final_base_masks:
+            if calculate_iou(current_mask, approved_mask) > 0.20:
+                is_duplicate = True
+                break
+        if not is_duplicate and np.sum(current_mask) <= (image_area * 0.30):
+            final_base_masks.append(current_mask)
+
+    # ==== LORA SAM-3 INFERENCE ====
+    resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    image_tensor = transform(resized_image)
+    image_obj = SAM3Image(data=image_tensor, objects=[], size=(1008, 1008))
+    
+    # Using your exact inference metadata structure
+    query = FindQueryLoaded(
+        query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True, 
+        query_processing_order=0, inference_metadata=InferenceMetadata(
+            coco_image_id=img_id_idx, original_image_id=img_id_idx, 
+            original_category_id=0, original_size=(orig_h, orig_w), object_id=-1, frame_index=-1
+        )
+    )
+    
+    datapoint = Datapoint(find_queries=[query], images=[image_obj], raw_images=[resized_image])
+    batch_dict = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    input_batch = move_to_device(batch_dict["input"], device)
+
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs_list = lora_model(input_batch)
+        with SAM3Output.iteration_mode(outputs_list, iter_mode=SAM3Output.IterMode.ALL_STEPS_PER_STAGE) as outputs_iter:
+            final_outputs = list(outputs_iter)[-1][-1]
+            pred_logits = final_outputs['pred_logits'][0].detach().cpu()
+            pred_boxes = final_outputs['pred_boxes'][0].detach().cpu()
+            pred_masks = final_outputs['pred_masks'][0].detach().cpu()
+
+        filtered_masks, _, _ = apply_sam3_nms(
+            pred_logits=pred_logits, pred_masks=pred_masks, pred_boxes=pred_boxes, 
+            prob_threshold=0.3, nms_iou_threshold=0.7
+        )
+    
+    final_lora_masks = []
+    if len(filtered_masks) > 0:
+        upsampled_masks = torch.nn.functional.interpolate(
+            filtered_masks.unsqueeze(1).float(), size=(orig_h, orig_w), mode='bilinear', align_corners=False
+        ).squeeze(1)
+        for m in (upsampled_masks > 0.5).numpy():
+            final_lora_masks.append(m.astype(bool))
+
+    # ==== VISUALIZATION (1x3 Panel) ====
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    axes[0].imshow(pil_image)
+    axes[0].set_title("Raw Human KPMP WSI (PAS)", fontsize=14, fontweight="bold")
+    axes[0].axis("off")
+    
+    base_blended = blend_masks(pil_image, final_base_masks)
+    axes[1].imshow(base_blended)
+    axes[1].set_title(f"Base SAM-3 AMG ({len(final_base_masks)} detected)", fontsize=14, fontweight="bold")
+    axes[1].axis("off")
+    
+    lora_blended = blend_masks(pil_image, final_lora_masks)
+    axes[2].imshow(lora_blended)
+    axes[2].set_title(f"LoRA SAM-3 ({len(final_lora_masks)} detected)", fontsize=14, fontweight="bold")
+    axes[2].axis("off")
+    
+    plt.tight_layout()
+    save_path = OUTPUT_DIR / f"comparison_{img_path.name}"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+print(f"\n✅ Visual evaluation complete! Check the folder: {OUTPUT_DIR}")
+
+# %%% out
+
+    '''
+    
+        Loading Base SAM-3 AMG Pipeline...
+        Loading weights: 100%|██████████| 685/685 [00:00<00:00, 9799.91it/s]
+        Loading Native SAM-3 & Injecting Custom LoRA...
+        Replaced 37 nn.MultiheadAttention modules with MultiheadAttentionLoRA
+        Applied LoRA to 314 modules:
+          - backbone.vision_backbone.trunk.blocks.0.attn.qkv
+          - backbone.vision_backbone.trunk.blocks.0.attn.proj
+          - backbone.vision_backbone.trunk.blocks.0.mlp.fc1
+          - backbone.vision_backbone.trunk.blocks.0.mlp.fc2
+          - backbone.vision_backbone.trunk.blocks.1.attn.qkv
+          - backbone.vision_backbone.trunk.blocks.1.attn.proj
+          - backbone.vision_backbone.trunk.blocks.1.mlp.fc1
+          - backbone.vision_backbone.trunk.blocks.1.mlp.fc2
+          - backbone.vision_backbone.trunk.blocks.2.attn.qkv
+          - backbone.vision_backbone.trunk.blocks.2.attn.proj
+          - backbone.vision_backbone.trunk.blocks.2.mlp.fc1
+          - backbone.vision_backbone.trunk.blocks.2.mlp.fc2
+          - backbone.vision_backbone.trunk.blocks.3.attn.qkv
+          - backbone.vision_backbone.trunk.blocks.3.attn.proj
+          - backbone.vision_backbone.trunk.blocks.3.mlp.fc1
+        and 299 more
+        Loaded LoRA weights from F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt
+        
+        Starting evaluation on 50 images...
+        Processing 11edf527-6c6b-42a6-bf0f-d9b638679abd_S-2102-006599_PAS_1of2.png...
+        c:\code\dl\explore_dl.py:2718: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+          with torch.cuda.amp.autocast():
+        Processing 157cb082-84da-4510-aac0-79eefe8d48b1_S-2406-009318_PAS_2of2.png...
+        ...
+        Processing 57af8b87-6e70-42ee-a8ef-a52703f9f454_S-2312-004110_PAS_1of2.png...
+        [transformers] You seem to be using the pipelines sequentially on GPU. In order to maximize efficiency please use a dataset
+        Processing 6b5f84cf-30b5-4b44-b1e9-76d7803cf05a_S-2006-001896_PAS_1of2.png...
+        ...
+        Processing f3503de1-354e-4c06-8b5c-b67c3df9c387_S-2203-016179_PAS_2of2.png...
+        
+        ✅ Visual evaluation complete! Check the folder: F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\visual_comparison
+    
+    '''
+
 # %%'
 
 
