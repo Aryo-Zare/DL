@@ -883,6 +883,8 @@ def clamp_coordinates(flat_coords):
 # =====================================================================
 # Inputs
 # this contains the 96 crops ( 2 * 48 WSIs ).
+    # it is a copy from here __ after cropping to 1024 * 1024 pixels ( instead of sometimes : 1024 * 1025 pixels ).
+        # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename
 original_images_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original")
 # this contains 96 corresponding GeoJson files.
 geojson_master_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename\manual_mask\total\geojson")
@@ -2572,6 +2574,8 @@ print(f"\n✅ Successfully cleaned and strictly resized {processed_count} images
 print(f"Files saved to: {OUTPUT_DIR}")
 
 # %%% 3-panel visual comparison
+
+# this does not calculate IOU, as annotations are pending.
 
 import sys
 import os
