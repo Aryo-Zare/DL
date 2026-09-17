@@ -883,7 +883,7 @@ def clamp_coordinates(flat_coords):
 # =====================================================================
 # Inputs
 # this contains the 96 crops ( 2 * 48 WSIs ).
-    # it is a copy from here __ after cropping to 1024 * 1024 pixels ( instead of sometimes : 1024 * 1025 pixels ).
+    # it is a copy from  ____ after cropping to 1024 * 1024 pixels ( instead of sometimes : 1024 * 1025 pixels ).
         # F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\crops\rename
 original_images_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\original")
 # this contains 96 corresponding GeoJson files.
