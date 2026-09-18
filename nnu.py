@@ -1,4 +1,6 @@
 
+# env_6
+
 # %% not needed.
 
 # this contains 96 GeoJson files.
@@ -8,8 +10,6 @@ geojson_master_dir = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\
 # %% don't use
 
 # this is the original version of nnU-net dataset random train-test split for 5-fold cross-validation.
-
-# env_6
 
 import os
 import json
@@ -348,6 +348,12 @@ print(f"Destination: {OUTPUT_INPUT_DIR}")
 
 # %% inference 
 
+# output of the previous step is input of this step :
+    # RGB-split gray-scale images.
+
+
+# =>  C:\code\shell\SAM_3.sh   \   inference
+# for pig
 # =============================================================================
 # terminal ( vs-code ) : 
 #     C:\code\shell\SAM_3.sh  |  
@@ -356,6 +362,8 @@ print(f"Destination: {OUTPUT_INPUT_DIR}")
 #             "F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output" ^
 #             -d 001 -c 2d -f 0
 # =============================================================================
+
+# also exists for kpmp
 
 # %% overlay _ pig
 
@@ -656,6 +664,17 @@ print(f"\nEvaluation complete!")
 print(f"Single overlays saved to: {SINGLE_OUT_DIR}")
 print(f"Triple comparison plots saved to: {TRIPLE_OUT_DIR}")
 
+# %%% out
+
+'''
+    ...
+    Processing (49/50): ee7a05b3-e16b-4bec-9d9b-79b6c9a23172_S-2303-014329_PAS_2of2.png...
+    Processing (50/50): f3503de1-354e-4c06-8b5c-b67c3df9c387_S-2203-016179_PAS_2of2.png...
+    
+    Evaluation complete!
+    Single overlays saved to: F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\kpmp\single
+    Triple comparison plots saved to: F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\kpmp\triple
+'''
 
 # %%
 
