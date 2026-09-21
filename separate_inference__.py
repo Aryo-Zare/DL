@@ -57,6 +57,7 @@ WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
         ├───nnu
         └───SAM_3_AMG
     
+    there is also a folder : 'raw_images' : in the kpmp & pig folder.
     
     exceptions : 
         kpmp does not have ground-truth annotations, hence, this was not done.
@@ -328,4 +329,203 @@ print(f"\n[5/5] Extraction Complete. All masks successfully saved to:\n{MANUSCRI
 
 # terminal output was saved to  :  F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output  |  terminal_output__.txt
 
+
+# %% test reconstruct masks from .npy files.
+
+# =>  gemini__dl__.docx : cell-689
+
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+from PIL import Image
+
+# --- 1. DIRECTORY SETUP ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+TEST_OUT_DIR = BASE_DIR / "test_figure"
+
+PIG_OUT = TEST_OUT_DIR / "pig"
+KPMP_OUT = TEST_OUT_DIR / "kpmp"
+
+PIG_OUT.mkdir(parents=True, exist_ok=True)
+KPMP_OUT.mkdir(parents=True, exist_ok=True)
+
+# --- 2. OVERLAY FUNCTION ---
+def overlay_instances(base_img_arr, npy_path):
+    """
+    Loads an (N, H, W) .npy array. 
+    Overlays each of the N instances with a distinct random color.
+    Returns the blended image and the instance count (N).
+    """
+    blended = base_img_arr.copy()
+    if not npy_path.exists():
+        return blended, 0
+        
+    instances = np.load(npy_path)
+    num_instances = instances.shape[0]
+    
+    # Apply a random color for each discrete instance slice in the array
+    for i in range(num_instances):
+        mask = instances[i]
+        color = np.random.randint(50, 255, (3,), dtype=np.uint8)
+        blended[mask] = (blended[mask] * 0.5 + color * 0.5).astype(np.uint8)
+        
+    return blended, num_instances
+
+# --- 3. PIG DATASET TEST (4-Panel: GT, nnU-Net, Base AMG, LoRA) ---
+pig_raw_dir = BASE_DIR / "pig" / "raw_images"
+pig_images = sorted(list(pig_raw_dir.glob("*.png")))
+print(f"Testing {len(pig_images)} Pig Arrays...")
+
+for img_path in pig_images:
+    case_id = img_path.stem
+    raw_arr = np.array(Image.open(img_path).convert("RGB"))
+    
+    # Load and blend all 4 mask types
+    img_gt, n_gt = overlay_instances(raw_arr, BASE_DIR / "pig" / "gt" / f"{case_id}.npy")
+    img_nnu, n_nnu = overlay_instances(raw_arr, BASE_DIR / "pig" / "nnu" / f"{case_id}.npy")
+    img_amg, n_amg = overlay_instances(raw_arr, BASE_DIR / "pig" / "SAM_3_AMG" / f"{case_id}.npy")
+    img_lora, n_lora = overlay_instances(raw_arr, BASE_DIR / "pig" / "lora" / f"{case_id}.npy")
+    
+    # Plotting
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6), dpi=150)
+    
+    axes[0].imshow(img_gt)
+    axes[0].set_title(f"Ground Truth ({n_gt} objects)", fontsize=14, fontweight="bold")
+    
+    axes[1].imshow(img_nnu)
+    axes[1].set_title(f"nnU-Net ({n_nnu} objects)", fontsize=14, fontweight="bold")
+    
+    axes[2].imshow(img_amg)
+    axes[2].set_title(f"Base SAM-3 AMG ({n_amg} objects)", fontsize=14, fontweight="bold")
+    
+    axes[3].imshow(img_lora)
+    axes[3].set_title(f"LoRA SAM-3 ({n_lora} objects)", fontsize=14, fontweight="bold")
+    
+    for ax in axes:
+        ax.axis('off')
+        
+    plt.tight_layout()
+    fig.savefig(PIG_OUT / f"{case_id}_pig_test.png", bbox_inches='tight')
+    plt.close(fig)
+
+# --- 4. KPMP DATASET TEST (3-Panel: Raw, nnU-Net, LoRA) ---
+kpmp_raw_dir = BASE_DIR / "kpmp" / "raw_images"
+kpmp_images = sorted(list(kpmp_raw_dir.glob("*.png")))
+print(f"Testing {len(kpmp_images)} KPMP Arrays...")
+
+for img_path in kpmp_images:
+    case_id = img_path.stem
+    raw_arr = np.array(Image.open(img_path).convert("RGB"))
+    
+    img_nnu, n_nnu = overlay_instances(raw_arr, BASE_DIR / "kpmp" / "nnu" / f"{case_id}.npy")
+    img_lora, n_lora = overlay_instances(raw_arr, BASE_DIR / "kpmp" / "lora" / f"{case_id}.npy")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), dpi=150)
+    
+    axes[0].imshow(raw_arr)
+    axes[0].set_title("Raw KPMP Image", fontsize=14, fontweight="bold")
+    
+    axes[1].imshow(img_nnu)
+    axes[1].set_title(f"nnU-Net ({n_nnu} objects)", fontsize=14, fontweight="bold")
+    
+    axes[2].imshow(img_lora)
+    axes[2].set_title(f"LoRA SAM-3 ({n_lora} objects)", fontsize=14, fontweight="bold")
+    
+    for ax in axes:
+        ax.axis('off')
+        
+    plt.tight_layout()
+    fig.savefig(KPMP_OUT / f"{case_id}_kpmp_test.png", bbox_inches='tight')
+    plt.close(fig)
+
+print(f"\nTest plots successfully generated in:\n{TEST_OUT_DIR}")
+
+
+# %% merge fragmented annotations.
+
+# =>  gemini__dl__.docx : cell-691
+
+import numpy as np
+from pathlib import Path
+from scipy.sparse.csgraph import connected_components
+
+# --- 1. PATH TO GROUND TRUTH FOLDER ---
+# Currently running on the Pig GT since KPMP annotations are pending
+GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\pig\gt")
+
+print(f"Scanning for fragmented annotations in: {GT_DIR}\n")
+
+# --- 2. PROCESSING LOOP ---
+npy_files = sorted(list(GT_DIR.glob("*.npy")))
+
+for npy_path in npy_files:
+    masks = np.load(npy_path)
+    N = masks.shape[0]
+    
+    if N == 0:
+        continue
+        
+    # Step A: Build an Adjacency Matrix for Overlaps
+    # overlap_matrix[i, j] will be True if mask i and mask j share any pixels
+    overlap_matrix = np.zeros((N, N), dtype=bool)
+    
+    for i in range(N):
+        for j in range(i, N):
+            if i == j:
+                overlap_matrix[i, j] = True
+            else:
+                # Check for spatial overlap (logical AND)
+                has_overlap = np.any(masks[i] & masks[j])
+                overlap_matrix[i, j] = has_overlap
+                overlap_matrix[j, i] = has_overlap
+
+    # Step B: Find Connected Components (Linked Fragments)
+    # n_components is the true number of unique objects
+    # labels maps each original mask to its new merged object ID
+    n_components, labels = connected_components(overlap_matrix, directed=False)
+    
+    # Step C: Merge the Fragments
+    if n_components < N:
+        merged_masks = []
+        for comp_id in range(n_components):
+            # Find all fragments belonging to this object
+            fragment_indices = np.where(labels == comp_id)[0]
+            
+            # Collapse them into a single mask (logical OR)
+            merged = np.any(masks[fragment_indices], axis=0)
+            merged_masks.append(merged)
+            
+        # Convert back to (M, H, W) array and save, overwriting the old one
+        new_stack = np.stack(merged_masks, axis=0).astype(bool)
+        np.save(npy_path, new_stack)
+        
+        print(f"Fixed {npy_path.stem}: Merged {N} fragments down to {n_components} real objects.")
+    else:
+        print(f"Checked {npy_path.stem}: {N} objects. No overlapping fragments found.")
+
+print("\n✅ Ground truth instances successfully merged and updated!")
+
+# %%% out
+
+'''
+    Scanning for fragmented annotations in: F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\pig\gt
+    
+    Checked ZC21_1__crop_1__chaotic__: 3 objects. No overlapping fragments found.
+    Fixed ZC21_1__crop_2__packed__: Merged 14 fragments down to 11 real objects.
+    Checked ZC36_1__crop_1__packed__: 5 objects. No overlapping fragments found.
+    Checked ZC36_1__crop_2__packed__: 5 objects. No overlapping fragments found.
+    Fixed ZC38_1__crop_1__chaotic__: Merged 10 fragments down to 9 real objects.
+    Fixed ZC38_1__crop_2__chaotic__: Merged 14 fragments down to 13 real objects.
+    Fixed ZC39_1__crop_1__chaotic__: Merged 12 fragments down to 9 real objects.
+    Fixed ZC39_1__crop_2__packed__: Merged 9 fragments down to 6 real objects.
+    Checked ZC44_1__crop_1__packed__: 11 objects. No overlapping fragments found.
+    Fixed ZC44_1__crop_2__packed__: Merged 11 fragments down to 10 real objects.
+    
+    ✅ Ground truth instances successfully merged and updated!
+
+'''
+
 # %%'
+
+
+
