@@ -63,6 +63,7 @@ WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
         kpmp does not have ground-truth annotations, hence, this was not done.
         kpmp does not need base-sam-3-AMG : so this was not done.
     
+    this runs lora & base-SAM-3 inferences.
     
 '''
   
@@ -523,6 +524,145 @@ print("\n✅ Ground truth instances successfully merged and updated!")
     
     ✅ Ground truth instances successfully merged and updated!
 
+'''
+
+# %% benchmark LoRA
+
+# for : benchmarking nnU-net  =>  C:\code\shell\SAM_3.sh  |  benchmarking
+
+import sys
+import os
+import time
+from pathlib import Path
+import yaml
+import torch
+from PIL import Image as PILImage
+from torchvision.transforms import v2
+
+#---- 1. SPYDER PATH FIX ---
+PROJECT_ROOT = Path(r"C:\code\SAM3_LoRA")
+sys.path.append(str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
+
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.model_misc import SAM3Output
+from sam3.train.data.sam3_image_dataset import Datapoint, Image as SAM3Image, FindQueryLoaded, InferenceMetadata
+from sam3.train.data.collator import collate_fn_api
+from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
+from validate_sam3_lora import apply_sam3_nms, move_to_device
+
+#---- 2. CONFIGURATION ---
+INPUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\open_online_data\KPMP\crop_1024")
+CONFIG_PATH = PROJECT_ROOT / "configs/META__Tuned-Full-Lora-Config.yaml"
+WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
+device = torch.device("cuda")
+
+#---- 3. LOAD MODEL ---
+print("Loading LoRA SAM-3 for Timing...")
+with open(CONFIG_PATH, "r") as f:
+    config = yaml.safe_load(f)
+
+lora_model = build_sam3_image_model(
+    device=device.type, compile=False, load_from_HF=True, 
+    bpe_path="sam3/assets/bpe_simple_vocab_16e6.txt.gz", eval_mode=False
+)
+lora_cfg = config["lora"]
+lora_config = LoRAConfig(
+    rank=lora_cfg["rank"], alpha=lora_cfg["alpha"], target_modules=lora_cfg["target_modules"],
+    apply_to_vision_encoder=lora_cfg["apply_to_vision_encoder"], apply_to_mask_decoder=lora_cfg["apply_to_mask_decoder"]
+)
+lora_model = apply_lora_to_model(lora_model, lora_config)
+load_lora_weights(lora_model, str(WEIGHTS_PATH))
+lora_model.to(device)
+lora_model.eval()
+
+transform = v2.Compose([
+    v2.ToImage(), v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+])
+
+images = sorted(list(INPUT_DIR.glob("*.png")))
+
+#---- 4. WARM-UP RUN (Do not time this) ---
+print("Running GPU Warm-up...")
+dummy_img = PILImage.open(images[0]).convert("RGB").resize((1008, 1008))
+dummy_tensor = transform(dummy_img)
+query = FindQueryLoaded(query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True, query_processing_order=0, inference_metadata=InferenceMetadata(coco_image_id=0, original_image_id=0, original_category_id=0, original_size=(1024, 1024), object_id=-1, frame_index=-1))
+datapoint = Datapoint(find_queries=[query], images=[SAM3Image(data=dummy_tensor, objects=[], size=(1008, 1008))], raw_images=[dummy_img])
+batch = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+with torch.no_grad():
+    with torch.cuda.amp.autocast():
+        _ = lora_model(move_to_device(batch["input"], device))
+torch.cuda.synchronize()
+
+#---- 5. TIMING LOOP ---
+print(f"Timing inference for {len(images)} KPMP crops...")
+start_time = time.perf_counter()
+
+for idx, img_path in enumerate(images):
+    pil_image = PILImage.open(img_path).convert("RGB")
+    resized = pil_image.resize((1008, 1008), PILImage.BILINEAR)
+    img_tensor = transform(resized)
+    
+    query = FindQueryLoaded(query_text="tubule", image_id=0, object_ids_output=[], is_exhaustive=True, query_processing_order=0, inference_metadata=InferenceMetadata(coco_image_id=idx, original_image_id=idx, original_category_id=0, original_size=(1024, 1024), object_id=-1, frame_index=-1))
+    datapoint = Datapoint(find_queries=[query], images=[SAM3Image(data=img_tensor, objects=[], size=(1008, 1008))], raw_images=[resized])
+    batch = collate_fn_api([datapoint], dict_key="input", with_seg_masks=True)
+    input_batch = move_to_device(batch["input"], device)
+
+    with torch.no_grad():
+        with torch.cuda.amp.autocast():
+            outputs = lora_model(input_batch)
+        
+        # Ensure GPU finishes operations before looping
+        torch.cuda.synchronize()
+
+end_time = time.perf_counter()
+total_time = end_time - start_time
+avg_time = total_time / len(images)
+
+print(f"\n--- TIMING RESULTS ---")
+print(f"Total Time for 50 images: {total_time:.2f} seconds")
+print(f"Average Time per 1024x1024 crop: {avg_time:.3f} seconds/crop")
+
+# %%% out
+
+# this output was also saved here : 
+    # F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\time_test \ time-test__LoRA__.txt
+
+
+'''
+    C:\Users\User\miniconda3\envs\env_6\Lib\site-packages\tqdm\auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+      from .autonotebook import tqdm as notebook_tqdm
+    Loading LoRA SAM-3 for Timing...
+    Replaced 55 nn.MultiheadAttention modules with MultiheadAttentionLoRA
+    Applied LoRA to 422 modules:
+      - backbone.vision_backbone.trunk.blocks.0.attn.qkv
+      - backbone.vision_backbone.trunk.blocks.0.attn.proj
+      - backbone.vision_backbone.trunk.blocks.0.mlp.fc1
+      - backbone.vision_backbone.trunk.blocks.0.mlp.fc2
+      - backbone.vision_backbone.trunk.blocks.1.attn.qkv
+      - backbone.vision_backbone.trunk.blocks.1.attn.proj
+      - backbone.vision_backbone.trunk.blocks.1.mlp.fc1
+      - backbone.vision_backbone.trunk.blocks.1.mlp.fc2
+      - backbone.vision_backbone.trunk.blocks.2.attn.qkv
+      - backbone.vision_backbone.trunk.blocks.2.attn.proj
+      - backbone.vision_backbone.trunk.blocks.2.mlp.fc1
+      - backbone.vision_backbone.trunk.blocks.2.mlp.fc2
+      - backbone.vision_backbone.trunk.blocks.3.attn.qkv
+      - backbone.vision_backbone.trunk.blocks.3.attn.proj
+      - backbone.vision_backbone.trunk.blocks.3.mlp.fc1
+    and 407 more
+    Loaded LoRA weights from F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt
+    Running GPU Warm-up...
+    c:\code\dl\separate_inference__.py:592: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+      with torch.cuda.amp.autocast():
+    Timing inference for 50 KPMP crops...
+    c:\code\dl\separate_inference__.py:611: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+      with torch.cuda.amp.autocast():
+    
+    --- TIMING RESULTS ---
+    Total Time for 50 images: 14.10 seconds
+    Average Time per 1024x1024 crop: 0.282 seconds/crop
 '''
 
 # %%'
