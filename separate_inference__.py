@@ -330,7 +330,6 @@ print(f"\n[5/5] Extraction Complete. All masks successfully saved to:\n{MANUSCRI
 
 # terminal output was saved to  :  F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output  |  terminal_output__.txt
 
-
 # %% test reconstruct masks from .npy files.
 
 # =>  gemini__dl__.docx : cell-689
@@ -664,6 +663,217 @@ print(f"Average Time per 1024x1024 crop: {avg_time:.3f} seconds/crop")
     Total Time for 50 images: 14.10 seconds
     Average Time per 1024x1024 crop: 0.282 seconds/crop
 '''
+
+# %% KPMP gt ( annotations )
+
+# convert .geojson to .npy
+# remove fragmented annotations.
+    # ( this rarely occurred when I mistakenly interrupted the annotation in the middle of an instance, 
+    # & restared a new annotation, with an overlap with the previously interrupted one. )
+
+import json
+import numpy as np
+from pathlib import Path
+from PIL import Image, ImageDraw
+from scipy.sparse.csgraph import connected_components
+
+# --- 1. DIRECTORIES ---
+RAW_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\raw_images")
+GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\gt")
+
+
+print(f"Scanning for GeoJSON annotations in: {GT_DIR}\n")
+
+# --- 2. PROCESSING LOOP ---
+geojson_files = sorted(list(GT_DIR.glob("*.geojson")))
+
+for geojson_path in geojson_files:
+    case_id = geojson_path.stem
+    raw_img_path = RAW_DIR / f"{case_id}.png"
+    
+    if not raw_img_path.exists():
+        print(f"  [Warning] Raw image not found for {case_id}. Skipping.")
+        continue
+        
+    # Get true dimensions from the raw image
+    with Image.open(raw_img_path) as img:
+        w, h = img.size
+        
+    # Parse GeoJSON
+    with open(geojson_path, 'r') as f:
+        data = json.load(f)
+        
+    raw_masks = []
+    features = data.get('features', [])
+    
+    # Step A: Rasterize Polygons to Binary Masks
+    for feature in features:
+        geom = feature.get('geometry', {})
+        if not geom:
+            continue
+            
+        geom_type = geom.get('type')
+        coords = geom.get('coordinates', [])
+        
+        if not coords:
+            continue
+            
+        # Create a blank black image for the mask
+        mask_img = Image.new('L', (w, h), 0)
+        draw = ImageDraw.Draw(mask_img)
+        
+        # QuPath GeoJSON polygons store the outer boundary at coords[0]
+        if geom_type == 'Polygon':
+            xy = [tuple(point) for point in coords[0]]
+            draw.polygon(xy, outline=1, fill=1)
+            raw_masks.append(np.array(mask_img).astype(bool))
+            
+        elif geom_type == 'MultiPolygon':
+            for poly in coords:
+                xy = [tuple(point) for point in poly[0]]
+                draw.polygon(xy, outline=1, fill=1)
+                raw_masks.append(np.array(mask_img).astype(bool))
+
+    N_initial = len(raw_masks)
+    if N_initial == 0:
+        print(f"  [Skip] {case_id}: No valid polygons found.")
+        # Save empty array to maintain dataset structure
+        np.save(GT_DIR / f"{case_id}.npy", np.zeros((0, h, w), dtype=bool))
+        continue
+
+    # Step B: Build Adjacency Matrix for Overlaps
+    overlap_matrix = np.zeros((N_initial, N_initial), dtype=bool)
+    for i in range(N_initial):
+        for j in range(i, N_initial):
+            if i == j:
+                overlap_matrix[i, j] = True
+            else:
+                has_overlap = np.any(raw_masks[i] & raw_masks[j])
+                overlap_matrix[i, j] = has_overlap
+                overlap_matrix[j, i] = has_overlap
+
+    # Step C: Find and Merge Connected Components
+    n_components, labels = connected_components(overlap_matrix, directed=False)
+    
+    merged_masks = []
+    for comp_id in range(n_components):
+        fragment_indices = np.where(labels == comp_id)[0]
+        # Logical OR merges the overlapping binary masks
+        merged = np.any(np.array(raw_masks)[fragment_indices], axis=0)
+        merged_masks.append(merged)
+        
+    # Step D: Stack and Save as .npy
+    final_stack = np.stack(merged_masks, axis=0).astype(bool)
+    out_npy = GT_DIR / f"{case_id}.npy"
+    np.save(out_npy, final_stack)
+    
+    # Print status based on whether fragments were merged
+    if n_components < N_initial:
+        print(f"  [Fixed] {case_id}: Rasterized {N_initial} fragments -> Merged into {n_components} tubules -> Saved .npy")
+    else:
+        print(f"  [OK]    {case_id}: Rasterized {N_initial} intact tubules -> Saved .npy")
+
+print("\n✅ KPMP Ground Truth conversion and overlap-merging complete!")
+
+# %%% move geojson files to a separate folder
+
+# output .npy files in the previous script were saved in the same geojson source files folder.
+    # the geojson files are moved to a separate folder here.
+
+from pathlib import Path
+import shutil
+
+src = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\gt")
+dst = src / "geojson"
+
+# Create destination folder if it doesn't exist
+dst.mkdir(parents=True, exist_ok=True)
+
+# Move each .geojson file (only directly in src, not in subfolders)
+for file in src.glob("*.geojson"):
+    if file.is_file():
+        target = dst / file.name
+        # Avoid overwriting: add a suffix if the name already exists
+        if target.exists():
+            target = dst / f"{file.stem}_moved{file.suffix}"
+        shutil.move(str(file), str(target))
+        print(f"Moved: {file.name} -> {target}")
+
+print("Done.")
+
+# %%% test plot
+
+# overlay raw images & ground truth for KPMP dataset.
+
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+from PIL import Image
+
+# --- 1. DIRECTORY SETUP ---
+KPMP_BASE = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+RAW_DIR = KPMP_BASE / "raw_images"
+GT_DIR = KPMP_BASE / "gt"
+OUT_DIR = GT_DIR / "test_overlay_gt"
+
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- 2. OVERLAY FUNCTION ---
+def overlay_instances(base_img_arr, npy_path):
+    """
+    Loads an (N, H, W) .npy array. 
+    Overlays each of the N instances with a distinct random color.
+    """
+    blended = base_img_arr.copy()
+    if not npy_path.exists():
+        return blended, 0
+        
+    instances = np.load(npy_path)
+    num_instances = instances.shape[0]
+    
+    # Apply a random color for each discrete instance
+    for i in range(num_instances):
+        mask = instances[i]
+        color = np.random.randint(50, 255, (3,), dtype=np.uint8)
+        blended[mask] = (blended[mask] * 0.5 + color * 0.5).astype(np.uint8)
+        
+    return blended, num_instances
+
+# --- 3. GENERATE 2-PANEL FIGURES ---
+raw_images = sorted(list(RAW_DIR.glob("*.png")))
+print(f"Generating 2-panel overlays for {len(raw_images)} KPMP crops...")
+
+for img_path in raw_images:
+    case_id = img_path.stem
+    npy_path = GT_DIR / f"{case_id}.npy"
+    
+    if not npy_path.exists():
+        print(f"  [Skip] No .npy file found for {case_id}")
+        continue
+        
+    raw_arr = np.array(Image.open(img_path).convert("RGB"))
+    img_gt, n_gt = overlay_instances(raw_arr, npy_path)
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, 7), dpi=150)
+    
+    # Left Panel: Raw Image
+    axes[0].imshow(raw_arr)
+    axes[0].set_title("Raw KPMP Image", fontsize=14, fontweight="bold")
+    
+    # Right Panel: Ground Truth Overlay
+    axes[1].imshow(img_gt)
+    axes[1].set_title(f"Ground Truth ({n_gt} tubules)", fontsize=14, fontweight="bold")
+    
+    for ax in axes:
+        ax.axis('off')
+        
+    plt.tight_layout()
+    fig.savefig(OUT_DIR / f"{case_id}_gt_overlay.png", bbox_inches='tight')
+    plt.close(fig)
+
+print(f"\n✅ All test overlays successfully generated in:\n{OUT_DIR}")
+
+
 
 # %%'
 
