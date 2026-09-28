@@ -874,8 +874,682 @@ for img_path in raw_images:
 print(f"\n✅ All test overlays successfully generated in:\n{OUT_DIR}")
 
 
+# %% metrics
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+# --- 1. SETUP PATHS ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+DATASETS = ["kpmp", "pig"]
+# Map datasets to the methods that need to be evaluated
+EVAL_MAP = {
+    "kpmp": ["lora", "nnu"],
+    "pig": ["lora", "nnu", "SAM_3_AMG"]
+}
+
+# --- 2. METRIC FUNCTIONS ---
+def get_pixel_metrics(gt_stack, pred_stack):
+    """Calculates Global IoU and Global Dice."""
+    # Flatten (N, H, W) to (H, W) boolean masks
+    gt_flat = np.any(gt_stack, axis=0) if gt_stack.shape[0] > 0 else np.zeros(gt_stack.shape[1:], dtype=bool)
+    pred_flat = np.any(pred_stack, axis=0) if pred_stack.shape[0] > 0 else np.zeros(pred_stack.shape[1:], dtype=bool)
+    
+    intersection = np.logical_and(gt_flat, pred_flat).sum()
+    union = np.logical_or(gt_flat, pred_flat).sum()
+    pred_sum = pred_flat.sum()
+    gt_sum = gt_flat.sum()
+    
+    # Handle empty images (no GT and no predictions)
+    if union == 0:
+        return 1.0, 1.0 
+    
+    iou = intersection / union
+    dice = (2.0 * intersection) / (pred_sum + gt_sum) if (pred_sum + gt_sum) > 0 else 0.0
+    return iou, dice
+
+def get_instance_metrics(gt_stack, pred_stack, method):
+    """Calculates TP, FP, FN, Instance F1, and Best-Match IoU."""
+    n_gt = gt_stack.shape[0]
+    n_pred = pred_stack.shape[0]
+    
+    # Edge cases
+    if n_gt == 0 and n_pred == 0:
+        return 0, 0, 0, 1.0, 1.0  # Perfect empty match
+    if n_gt == 0:
+        return 0, n_pred, 0, 0.0, np.nan
+    if n_pred == 0:
+        return 0, 0, n_gt, 0.0, 0.0
+        
+    # Build pairwise IoU matrix
+    iou_matrix = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            intersection = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+            if intersection > 0:
+                union = np.logical_or(gt_stack[i], pred_stack[j]).sum()
+                iou_matrix[i, j] = intersection / union
+                
+    # Best-Match IoU (Average of the max IoU for each GT object)
+    # Used primarily for Base SAM-3 AMG
+    best_match_ious = np.max(iou_matrix, axis=1)
+    best_match_iou_avg = np.mean(best_match_ious)
+    
+    # Calculate Instance F1 (Threshold: IoU >= 0.5)
+    tp = 0
+    matched_preds = set()
+    
+    for i in range(n_gt):
+        # Find the prediction with the highest IoU for this GT instance
+        best_pred_idx = np.argmax(iou_matrix[i])
+        best_iou = iou_matrix[i, best_pred_idx]
+        
+        if best_iou >= 0.5 and best_pred_idx not in matched_preds:
+            tp += 1
+            matched_preds.add(best_pred_idx)
+            
+    fp = n_pred - tp
+    fn = n_gt - tp
+    f1 = (2 * tp) / (2 * tp + fp + fn) if (2 * tp + fp + fn) > 0 else 0.0
+    
+    return tp, fp, fn, f1, best_match_iou_avg
+
+# --- 3. MAIN EXTRACTION LOOP ---
+records = []
+
+for dataset in DATASETS:
+    print(f"Processing dataset: {dataset.upper()}")
+    gt_dir = BASE_DIR / dataset / "gt"
+    gt_files = sorted(list(gt_dir.glob("*.npy")))
+    
+    methods = EVAL_MAP[dataset]
+    
+    for method in methods:
+        print(f"  Evaluating method: {method}")
+        pred_dir = BASE_DIR / dataset / method
+        
+        for gt_path in gt_files:
+            case_id = gt_path.stem
+            pred_path = pred_dir / f"{case_id}.npy"
+            
+            if not pred_path.exists():
+                print(f"    [Warning] Missing prediction for {case_id} in {method}. Skipping.")
+                continue
+                
+            # Load stacks
+            gt_stack = np.load(gt_path)
+            pred_stack = np.load(pred_path)
+            
+            n_gt = gt_stack.shape[0]
+            n_pred = pred_stack.shape[0]
+            count_abs_error = abs(n_pred - n_gt)
+            
+            # Calculate Metrics
+            global_iou, global_dice = get_pixel_metrics(gt_stack, pred_stack)
+            tp, fp, fn, instance_f1, best_match_iou = get_instance_metrics(gt_stack, pred_stack, method)
+            
+            # Nullify best_match_iou for models other than Base SAM-3 AMG to match your table design
+            # if method != "SAM_3_AMG":
+            #     best_match_iou = np.nan
+                
+            # Append to records
+            records.append({
+                "Dataset": dataset,
+                "Method": method,
+                "Image_ID": case_id,
+                "GT_Count": n_gt,
+                "Pred_Count": n_pred,
+                "Count_Abs_Error": count_abs_error,
+                "TP": tp,
+                "FP": fp,
+                "FN": fn,
+                "Global_IoU": global_iou,
+                "Global_Dice": global_dice,
+                "Instance_F1": instance_f1,
+                "Best_Match_IoU": best_match_iou
+            })
+
+# --- 4. EXPORT DATAFRAME ---
+df = pd.DataFrame(records)
+
+# Save as Pickle (preserves data types for Python plotting)
+pkl_path = OUT_DIR / "segmentation_metrics_master.pkl"
+df.to_pickle(pkl_path)
+
+# Save as CSV (easy to view in Excel)
+csv_path = OUT_DIR / "segmentation_metrics_master.csv"
+df.to_csv(csv_path, index=False)
+
+print(f"\n✅ Metrics successfully extracted for {len(df)} images.")
+print(f"📁 Saved to:\n  - {pkl_path}\n  - {csv_path}")
+
+# %%% dataframe
+
+df.shape
+    # Out[2]: (130, 13)
+
+df.head()
+
+# %%% plot
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+
+#---- 1. CONFIGURATION & STYLING 
+METRICS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+PKL_PATH = METRICS_DIR / "segmentation_metrics_master.pkl"
+
+df = pd.read_pickle(PKL_PATH)
+
+# Mathematically compute Best-Match Dice directly from Best-Match IoU
+df["Best_Match_Dice"] = (2 * df["Best_Match_IoU"]) / (1 + df["Best_Match_IoU"])
+
+method_rename = {
+    "lora": "LoRA SAM-3",
+    "nnu": "nnU-Net",
+    "SAM_3_AMG": "Base SAM-3 AMG"
+}
+df["Method_Display"] = df["Method"].map(method_rename)
+
+plt.rcParams.update({
+    "font.family": "sans-serif", "font.size": 11,
+    "axes.labelsize": 12, "axes.titlesize": 13,
+    "xtick.labelsize": 11, "ytick.labelsize": 11,
+    "figure.titlesize": 15, "pdf.fonttype": 42, "ps.fonttype": 42
+})
+
+palette = {
+    "LoRA SAM-3": "#1f77b4",       
+    "nnU-Net": "#ff7f0e",          
+    "Base SAM-3 AMG": "#2ca02c"    
+}
+
+def create_boxplot(data, metrics_list, title, filename, fig_width=18):
+    fig, axes = plt.subplots(1, len(metrics_list), figsize=(fig_width, 5), dpi=300)
+    if len(metrics_list) == 1:
+        axes = [axes]
+        
+    for ax, (metric, ax_title, ylim) in zip(axes, metrics_list):
+        # Added showfliers=False to remove the redundant white outlier circles
+        sns.boxplot(
+            data=data, x="Method_Display", y=metric, palette=palette,
+            ax=ax, width=0.45, boxprops=dict(alpha=0.75), showmeans=True, 
+            meanprops={"marker": "D", "markerfacecolor": "black", "markeredgecolor": "black", "markersize": 5}
+        ) # showfliers=False,
+        sns.stripplot(
+            data=data, x="Method_Display", y=metric, palette=palette,
+            ax=ax, size=5, jitter=0.2, alpha=0.6, linewidth=0.5, edgecolor="black"
+        )
+        ax.set_title(ax_title, fontweight="bold")
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        if ylim:
+            ax.set_ylim(ylim)
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+
+        # --- ADD THESE TWO LINES TO ROTATE LABELS 45 DEGREES ---
+        ax.set_xticks(range(len(data["Method_Display"].unique())))
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+
+    plt.suptitle(title, fontweight="bold", y=1.03)
+    plt.tight_layout()
+    fig.savefig(METRICS_DIR / filename, bbox_inches="tight")
+    plt.close(fig)
+
+#---- 2. FIGURE 1: KPMP (LoRA vs nnU-Net) 
+kpmp_df = df[df["Dataset"] == "kpmp"].copy()
+metrics_kpmp = [
+    # Y-limits adjusted to -0.05 to prevent border overlap with minimum values
+    ("Global_Dice", "Dice", (0.5, 1.05)),
+    ("Global_IoU", "IoU", (0.5, 1.05)),
+    ("Instance_F1", "Instance-Level F1 \n(IoU >= 0.5)", (-0.05, 1.05)),
+    ("Count_Abs_Error", "Count Absolute Error \n(|Pred - GT|)", None)
+]
+create_boxplot(kpmp_df, metrics_kpmp, 
+               "KPMP Dataset Evaluation \n (Human Needle-Core Biopsies, N=50)", 
+               "figure_kpmp_nnu_vs_lora.pdf", fig_width=18)
+
+#---- 3. FIGURE 2: PIG (LoRA vs nnU-Net) 
+pig_nnu_lora = df[(df["Dataset"] == "pig") & (df["Method"].isin(["lora", "nnu"]))].copy()
+metrics_pig = [
+    ("Global_Dice", "Dice", (0.5, 1.05)),
+    ("Global_IoU", "IoU", (0.5, 1.05)),
+    ("Instance_F1", "Instance-Level F1 \n(IoU >= 0.5)", (-0.05, 1.05)),
+    ("Count_Abs_Error", "Count Absolute Error", None)
+]
+create_boxplot(pig_nnu_lora, metrics_pig, 
+               "Pig Test Cohort (In-Domain, N=10) \n LoRA vs. nnU-Net", 
+               "figure_pig_nnu_vs_lora.pdf", fig_width=18)
+
+#---- 4. FIGURE 3: PIG (Base SAM-3 AMG vs LoRA) 
+pig_base_lora = df[(df["Dataset"] == "pig") & (df["Method"].isin(["lora", "SAM_3_AMG"]))].copy()
+# Added Best-Match Dice and expanded to 4 panels
+metrics_base = [
+    ("Best_Match_Dice", "Best-Match Dice", (-0.05, 1.05)),
+    ("Best_Match_IoU", "Best-Match IoU", (-0.05, 1.05)),
+    ("Instance_F1", "Instance-Level F1 \n(IoU >= 0.5)", (-0.05, 1.05)),
+    ("Count_Abs_Error", "Count Absolute Error", None)
+]
+# Increased fig_width to 18 to accommodate the 4th subplot
+create_boxplot(pig_base_lora, metrics_base, 
+               "Pig Test Cohort (In-Domain, N=10) \n Base SAM-3 AMG vs. LoRA", 
+               "figure_pig_base_vs_lora.pdf", fig_width=18)
+
+print(f"Saved optimized split vector PDFs in: {METRICS_DIR}")
+
+# %%% stat
+
+import pandas as pd
+from scipy.stats import wilcoxon
+from pathlib import Path
+import warnings
+
+# Suppress scipy warnings for perfect matches (zero differences)
+warnings.filterwarnings("ignore")
+
+# --- 1. SETUP ---
+METRICS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+PKL_PATH = METRICS_DIR / "segmentation_metrics_master.pkl"
+
+df = pd.read_pickle(PKL_PATH)
+# Compute Best_Match_Dice if it wasn't explicitly saved in the pickle
+if "Best_Match_Dice" not in df.columns:
+    df["Best_Match_Dice"] = (2 * df["Best_Match_IoU"]) / (1 + df["Best_Match_IoU"])
+
+results = []
+
+def run_paired_stats(data, dataset_name, model_a, model_b, metrics):
+    """Aligns data by Image_ID and runs Wilcoxon signed-rank test."""
+    df_a = data[data["Method"] == model_a].set_index("Image_ID")
+    df_b = data[data["Method"] == model_b].set_index("Image_ID")
+    
+    # Ensure perfect alignment
+    common_ids = df_a.index.intersection(df_b.index)
+    df_a = df_a.loc[common_ids]
+    df_b = df_b.loc[common_ids]
+    
+    for metric in metrics:
+        vals_a = df_a[metric].dropna()
+        vals_b = df_b[metric].dropna()
+        
+        # Ensure we still have paired data after dropping NaNs
+        valid_ids = vals_a.index.intersection(vals_b.index)
+        if len(valid_ids) == 0:
+            continue
+            
+        a = vals_a.loc[valid_ids]
+        b = vals_b.loc[valid_ids]
+        
+        # Wilcoxon test
+        try:
+            stat, p_val = wilcoxon(a, b)
+        except ValueError:
+            # Triggered if all differences are exactly zero
+            p_val = 1.0
+            
+        results.append({
+            "Dataset": dataset_name,
+            "Comparison": f"{model_a} vs {model_b}",
+            "Metric": metric,
+            "Median_A": round(a.median(), 3),
+            "Median_B": round(b.median(), 3),
+            "p_value": p_val,
+            "Significant (p<0.05)": "Yes" if p_val < 0.05 else "No"
+        })
+
+# --- 2. RUN STATISTICAL TESTS ---
+
+# A. KPMP (Human) - LoRA vs nnU-Net
+kpmp_data = df[df["Dataset"] == "kpmp"]
+metrics_standard = ["Global_Dice", "Global_IoU", "Instance_F1", "Count_Abs_Error"]
+run_paired_stats(kpmp_data, "KPMP (N=50)", "lora", "nnu", metrics_standard)
+
+# B. Pig (In-Domain) - LoRA vs nnU-Net
+pig_data = df[df["Dataset"] == "pig"]
+run_paired_stats(pig_data, "Pig (N=10)", "lora", "nnu", metrics_standard)
+
+# C. Pig (In-Domain) - LoRA vs Base SAM-3 AMG
+metrics_base = ["Best_Match_Dice", "Best_Match_IoU", "Instance_F1", "Count_Abs_Error"]
+run_paired_stats(pig_data, "Pig (N=10)", "lora", "SAM_3_AMG", metrics_base)
+
+# --- 3. EXPORT RESULTS ---
+results_df = pd.DataFrame(results)
+
+# Format p-values for clean reading (scientific notation if very small)
+results_df["p_value"] = results_df["p_value"].apply(lambda x: f"{x:.4f}" if x >= 0.0001 else "<0.0001")
+
+out_csv = METRICS_DIR / "statistical_analysis_results.csv"
+results_df.to_csv(out_csv, index=False)
+
+print(f"✅ Statistical analysis complete. Results saved to:\n{out_csv}")
+print("\n--- Preview of Results ---")
+print(results_df.to_string(index=False))
+
+# %%%% out
+
+'''
+    ✅ Statistical analysis complete. Results saved to:
+    F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics\statistical_analysis_results.csv
+    
+    --- Preview of Results ---
+        Dataset        Comparison          Metric  Median_A  Median_B p_value Significant (p<0.05)
+    KPMP (N=50)       lora vs nnu     Global_Dice     0.938     0.934  0.6254                   No
+    KPMP (N=50)       lora vs nnu      Global_IoU     0.883     0.876  0.5721                   No
+    KPMP (N=50)       lora vs nnu     Instance_F1     0.852     0.735 <0.0001                  Yes
+    KPMP (N=50)       lora vs nnu Count_Abs_Error     4.000     5.000  0.0705                   No
+     Pig (N=10)       lora vs nnu     Global_Dice     0.932     0.935  1.0000                   No
+     Pig (N=10)       lora vs nnu      Global_IoU     0.872     0.878  0.8457                   No
+     Pig (N=10)       lora vs nnu     Instance_F1     0.836     0.723  0.2617                   No
+     Pig (N=10)       lora vs nnu Count_Abs_Error     2.500     5.000  0.3438                   No
+     Pig (N=10) lora vs SAM_3_AMG Best_Match_Dice     0.963     0.544  0.0020                  Yes
+     Pig (N=10) lora vs SAM_3_AMG  Best_Match_IoU     0.929     0.373  0.0020                  Yes
+     Pig (N=10) lora vs SAM_3_AMG     Instance_F1     0.836     0.250  0.0020                  Yes
+     Pig (N=10) lora vs SAM_3_AMG Count_Abs_Error     2.500     3.000  0.7656                   No
+'''
+
+# %%% Diagnosis
+
+'''
+    Gemini cell-735.
+    Why is the F1-Score Dropping ?
+    this script delves into the reason , whay F1-score is lower in nnU-net relative to LoRA-adapted SAM-3 :
+        there may be 2 scnerarios :
+    1.	nnU-net fragments  long tubules more than LoRa ( higher FN + FP ), or :
+    2.	nnU-net labeling junk structures ( pure FP ).
+
+'''
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# --- 1. SETUP PATHS ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+GT_DIR = BASE_DIR / "gt"
+OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+
+# --- 2. ERROR CATEGORIZATION FUNCTION ---
+def analyze_errors(gt_stack, pred_stack):
+    n_gt = gt_stack.shape[0]
+    n_pred = pred_stack.shape[0]
+    
+    if n_pred == 0:
+        return 0, 0 # No FPs
+    if n_gt == 0:
+        return 0, n_pred # All FPs are pure hallucinations
+        
+    # Build pairwise IoU matrix
+    iou_matrix = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            intersection = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+            if intersection > 0:
+                union = np.logical_or(gt_stack[i], pred_stack[j]).sum()
+                iou_matrix[i, j] = intersection / union
+                
+    # Find the maximum overlap each prediction has with ANY ground truth tubule
+    # shape: (n_pred,)
+    max_iou_per_pred = np.max(iou_matrix, axis=0)
+    
+    # 1. How many true positives?
+    tp = 0
+    matched_preds = set()
+    for i in range(n_gt):
+        best_pred_idx = np.argmax(iou_matrix[i])
+        if iou_matrix[i, best_pred_idx] >= 0.5 and best_pred_idx not in matched_preds:
+            tp += 1
+            matched_preds.add(best_pred_idx)
+            
+    # 2. Categorize the remaining (False Positives)
+    fp_total = n_pred - tp
+    
+    # A hallucination is an FP that essentially touches nothing real (IoU < 0.01)
+    hallucinations = np.sum(max_iou_per_pred < 0.01)
+    
+    # A fragment is an FP that overlaps with something, but isn't a TP
+    fragments = fp_total - hallucinations
+    
+    return fragments, hallucinations
+
+# --- 3. PROCESS DATASET ---
+print("Running Error Analysis on KPMP dataset...")
+gt_files = sorted(list(GT_DIR.glob("*.npy")))
+
+results = {"lora": {"Fragments": 0, "Hallucinations": 0},
+           "nnu": {"Fragments": 0, "Hallucinations": 0}}
+
+for gt_path in gt_files:
+    case_id = gt_path.stem
+    gt_stack = np.load(gt_path)
+    
+    for method in ["lora", "nnu"]:
+        pred_path = BASE_DIR / method / f"{case_id}.npy"
+        if pred_path.exists():
+            pred_stack = np.load(pred_path)
+            frag, hall = analyze_errors(gt_stack, pred_stack)
+            results[method]["Fragments"] += frag
+            results[method]["Hallucinations"] += hall
+
+# --- 4. VISUALIZE RESULTS ---
+methods = ["LoRA SAM-3", "nnU-Net"]
+fragments = [results["lora"]["Fragments"], results["nnu"]["Fragments"]]
+hallucinations = [results["lora"]["Hallucinations"], results["nnu"]["Hallucinations"]]
+
+fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
+
+bar_width = 0.5
+p1 = ax.bar(methods, fragments, bar_width, label='Fragmentation (Partial Overlap)', color='#1f77b4', edgecolor='black')
+p2 = ax.bar(methods, hallucinations, bar_width, bottom=fragments, label='Pure Hallucinations (Zero Overlap)', color='#d62728', edgecolor='black')
+
+# Add text labels on the bars
+ax.bar_label(p1, label_type='center', color='white', fontweight='bold', fontsize=12)
+ax.bar_label(p2, label_type='center', color='white', fontweight='bold', fontsize=12)
+
+ax.set_ylabel("Total False Positive Objects (Across 50 Images)", fontweight="bold")
+ax.set_title("Error Profile: Why is the F1-Score Dropping?", fontweight="bold")
+ax.legend()
+ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+out_fig = OUT_DIR / "figure_error_analysis_hallucinations.pdf"
+plt.tight_layout()
+fig.savefig(out_fig)
+plt.close(fig)
+
+print(f"\n✅ Analysis complete!")
+print(f"LoRA SAM-3 -> Fragments: {fragments[0]}, Hallucinations: {hallucinations[0]}")
+print(f"nnU-Net    -> Fragments: {fragments[1]}, Hallucinations: {hallucinations[1]}")
+print(f"Plot saved to: {out_fig}")
+
+# %%%% stat : hallucination versus fragmentation
+
+import numpy as np
+from scipy.stats import wilcoxon
+from pathlib import Path
+
+# --- 1. SETUP ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+GT_DIR = BASE_DIR / "gt"
+
+def analyze_errors(gt_stack, pred_stack):
+    n_gt = gt_stack.shape[0]
+    n_pred = pred_stack.shape[0]
+    
+    if n_pred == 0: return 0, 0
+    if n_gt == 0: return 0, n_pred
+        
+    iou_matrix = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            intersection = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+            if intersection > 0:
+                union = np.logical_or(gt_stack[i], pred_stack[j]).sum()
+                iou_matrix[i, j] = intersection / union
+                
+    max_iou_per_pred = np.max(iou_matrix, axis=0)
+    
+    tp = 0
+    matched_preds = set()
+    for i in range(n_gt):
+        best_pred_idx = np.argmax(iou_matrix[i])
+        if iou_matrix[i, best_pred_idx] >= 0.5 and best_pred_idx not in matched_preds:
+            tp += 1
+            matched_preds.add(best_pred_idx)
+            
+    fp_total = n_pred - tp
+    hallucinations = np.sum(max_iou_per_pred < 0.01)
+    fragments = fp_total - hallucinations
+    return fragments, hallucinations
+
+# --- 2. EXTRACT PER-IMAGE ARRAYS ---
+gt_files = sorted(list(GT_DIR.glob("*.npy")))
+lora_frags, lora_halls = [], []
+nnu_frags, nnu_halls = [], []
+
+print("Extracting per-image error arrays for stats...")
+for gt_path in gt_files:
+    case_id = gt_path.stem
+    gt_stack = np.load(gt_path)
+    
+    # LoRA
+    p_lora = BASE_DIR / "lora" / f"{case_id}.npy"
+    if p_lora.exists():
+        f, h = analyze_errors(gt_stack, np.load(p_lora))
+        lora_frags.append(f)
+        lora_halls.append(h)
+        
+    # nnU-Net
+    p_nnu = BASE_DIR / "nnu" / f"{case_id}.npy"
+    if p_nnu.exists():
+        f, h = analyze_errors(gt_stack, np.load(p_nnu))
+        nnu_frags.append(f)
+        nnu_halls.append(h)
+
+# --- 3. STATISTICAL TESTING ---
+print("\n--- WILCOXON P-VALUES (LoRA vs nnU-Net) ---")
+
+# Hallucinations
+stat_h, p_h = wilcoxon(lora_halls, nnu_halls)
+print(f"Hallucinations (Zero Overlap): p = {p_h:.4f}")
+if p_h < 0.05:
+    print("  -> SIGNIFICANT: Models differ in hallucination rates.")
+
+# Fragments
+stat_f, p_f = wilcoxon(lora_frags, nnu_frags)
+print(f"\nFragments (Partial Overlap): p = {p_f:.4f}")
+if p_f >= 0.05:
+    print("  -> NOT SIGNIFICANT: The difference (49 vs 40) is just statistical noise.")
+
+# %%%% out
+
+'''
+    Extracting per-image error arrays for stats...
+    
+    --- WILCOXON P-VALUES (LoRA vs nnU-Net) ---
+    Hallucinations (Zero Overlap): p = 0.0000
+      -> SIGNIFICANT: Models differ in hallucination rates.
+    
+    Fragments (Partial Overlap): p = 0.3194
+      -> NOT SIGNIFICANT: The difference (49 vs 40) is just statistical noise.
+'''
+
+# %%%% inject fragment | hallucination columns to the dataframe
+
+# Gemini cell-739
+# break-down of every FP to a fragment or hallucination   =>  saving to the pandas table.
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+# --- 1. SETUP PATHS ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+METRICS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+PKL_PATH = METRICS_DIR / "segmentation_metrics_master.pkl"
+CSV_PATH = METRICS_DIR / "segmentation_metrics_master.csv"
+
+# --- 2. ERROR CATEGORIZATION FUNCTION ---
+def analyze_errors(gt_stack, pred_stack):
+    n_gt = gt_stack.shape[0]
+    n_pred = pred_stack.shape[0]
+    
+    if n_pred == 0: return 0, 0
+    if n_gt == 0: return 0, n_pred
+        
+    iou_matrix = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            intersection = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+            if intersection > 0:
+                union = np.logical_or(gt_stack[i], pred_stack[j]).sum()
+                iou_matrix[i, j] = intersection / union
+                
+    max_iou_per_pred = np.max(iou_matrix, axis=0)
+    
+    tp = 0
+    matched_preds = set()
+    for i in range(n_gt):
+        best_pred_idx = np.argmax(iou_matrix[i])
+        if iou_matrix[i, best_pred_idx] >= 0.5 and best_pred_idx not in matched_preds:
+            tp += 1
+            matched_preds.add(best_pred_idx)
+            
+    fp_total = n_pred - tp
+    hallucinations = np.sum(max_iou_per_pred < 0.01)
+    fragments = fp_total - hallucinations
+    return fragments, hallucinations
+
+# --- 3. LOAD MASTER DATAFRAME ---
+print(f"Loading existing metrics from: {PKL_PATH}")
+df = pd.read_pickle(PKL_PATH)
+
+fragments_list = []
+hallucinations_list = []
+
+print("Extracting Fragments and Hallucinations for all rows...")
+
+# --- 4. ITERATE AND UPDATE ---
+for index, row in df.iterrows():
+    dataset = row["Dataset"]
+    method = row["Method"]
+    case_id = row["Image_ID"]
+    
+    gt_path = BASE_DIR / dataset / "gt" / f"{case_id}.npy"
+    pred_path = BASE_DIR / dataset / method / f"{case_id}.npy"
+    
+    if gt_path.exists() and pred_path.exists():
+        gt_stack = np.load(gt_path)
+        pred_stack = np.load(pred_path)
+        
+        frags, halls = analyze_errors(gt_stack, pred_stack)
+        fragments_list.append(frags)
+        hallucinations_list.append(halls)
+    else:
+        print(f"  [Warning] Missing .npy files for {dataset} | {method} | {case_id}")
+        fragments_list.append(np.nan)
+        hallucinations_list.append(np.nan)
+
+# Insert the new columns right after the existing 'FP' column for readability
+fp_col_index = df.columns.get_loc("FP")
+df.insert(fp_col_index + 1, "Fragments", fragments_list)
+df.insert(fp_col_index + 2, "Hallucinations", hallucinations_list)
+
+# --- 5. SAVE UPDATED DATAFRAME ---
+df.to_pickle(PKL_PATH)
+df.to_csv(CSV_PATH, index=False)
+
+print("\n✅ Master metrics successfully updated!")
+print(f"Added 'Fragments' and 'Hallucinations' to {len(df)} rows.")
+print("You can verify the CSV file in Excel.")
 
 # %%'
+
 
 
 
