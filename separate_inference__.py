@@ -1446,7 +1446,7 @@ print(f"\nFragments (Partial Overlap): p = {p_f:.4f}")
 if p_f >= 0.05:
     print("  -> NOT SIGNIFICANT: The difference (49 vs 40) is just statistical noise.")
 
-# %%%% out
+# %%%%% out
 
 '''
     Extracting per-image error arrays for stats...
@@ -1459,7 +1459,7 @@ if p_f >= 0.05:
       -> NOT SIGNIFICANT: The difference (49 vs 40) is just statistical noise.
 '''
 
-# %%%% inject fragment | hallucination columns to the dataframe
+# %%%% inject : fragment | hallucination columns to the dataframe
 
 # Gemini cell-739
 # break-down of every FP to a fragment or hallucination   =>  saving to the pandas table.

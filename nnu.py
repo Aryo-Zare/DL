@@ -474,6 +474,8 @@ print(f"Triple outputs saved to: {TRIPLE_OUT_DIR}")
 
 # %% overlay kpmp
 
+# %%% 3-panel
+
 # this creates 3-panel plots : original  _ nnu _ LoRA
 
 import sys
@@ -664,7 +666,7 @@ print(f"\nEvaluation complete!")
 print(f"Single overlays saved to: {SINGLE_OUT_DIR}")
 print(f"Triple comparison plots saved to: {TRIPLE_OUT_DIR}")
 
-# %%% out
+# %%%% out
 
 '''
     ...
@@ -676,5 +678,98 @@ print(f"Triple comparison plots saved to: {TRIPLE_OUT_DIR}")
     Triple comparison plots saved to: F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\kpmp\triple
 '''
 
-# %%
+# %%% 4-panel
+
+# Gemini cell-759 : for customozing the gap between panels & subtitle sizes.
+
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import ImageGrid
+from pathlib import Path
+from PIL import Image
+
+# --- 1. DIRECTORY SETUP ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+RAW_DIR = BASE_DIR / "raw_images"
+GT_DIR = BASE_DIR / "gt"
+LORA_DIR = BASE_DIR / "lora"
+NNU_DIR = BASE_DIR / "nnu"
+
+OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\kpmp\four-panel")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- 2. OVERLAY FUNCTION ---
+def overlay_instances(base_img_arr, npy_path):
+    blended = base_img_arr.copy()
+    if not npy_path.exists():
+        return blended, 0
+        
+    instances = np.load(npy_path)
+    num_instances = instances.shape[0]
+    
+    for i in range(num_instances):
+        mask = instances[i]
+        color = np.random.randint(50, 255, (3,), dtype=np.uint8)
+        blended[mask] = (blended[mask] * 0.5 + color * 0.5).astype(np.uint8)
+        
+    return blended, num_instances
+
+# --- 3. GENERATE 4-PANEL FIGURES ---
+raw_images = sorted(list(RAW_DIR.glob("*.png")))
+print(f"Generating 4-panel overlays for {len(raw_images)} KPMP crops...")
+
+for img_path in raw_images:
+    case_id = img_path.stem
+    
+    gt_path = GT_DIR / f"{case_id}.npy"
+    lora_path = LORA_DIR / f"{case_id}.npy"
+    nnu_path = NNU_DIR / f"{case_id}.npy"
+    
+    raw_arr = np.array(Image.open(img_path).convert("RGB"))
+    
+    img_gt, n_gt = overlay_instances(raw_arr, gt_path)
+    img_lora, n_lora = overlay_instances(raw_arr, lora_path)
+    img_nnu, n_nnu = overlay_instances(raw_arr, nnu_path)
+    
+    # THE FIX: Use ImageGrid to lock the axes to the image size
+    fig = plt.figure(figsize=(10, 10), dpi=200)
+    grid = ImageGrid(fig, 111, 
+                     nrows_ncols=(2, 2), 
+                     axes_pad=0.2,  # Fixed spacing between panels in inches ( The Gap Between Subplots ).
+                     share_all=True)
+    
+    # Grid[0] -> Top-Left
+    grid[0].imshow(raw_arr)
+    grid[0].set_title("Original Image", fontsize=9, fontweight="bold", pad=3)
+    
+    # Grid[1] -> Top-Right
+    grid[1].imshow(img_gt)
+    grid[1].set_title(f"Ground Truth ({n_gt} tubules)", fontsize=9, fontweight="bold", pad=3)
+    
+    # Grid[2] -> Bottom-Left (Clockwise from Bottom-Right = nnU-Net)
+    grid[2].imshow(img_nnu)
+    grid[2].set_title(f"nnU-Net ({n_nnu} objects)", fontsize=9, fontweight="bold", pad=3)
+    
+    # Grid[3] -> Bottom-Right (Clockwise from Top-Right = LoRA)
+    grid[3].imshow(img_lora)
+    grid[3].set_title(f"LoRA SAM-3 ({n_lora} objects)", fontsize=9, fontweight="bold", pad=3)
+    
+    for ax in grid:
+        ax.axis('off')
+        
+    fig.savefig(OUT_DIR / f"{case_id}_comparison.png", bbox_inches='tight', pad_inches=0.05)
+    plt.close(fig)
+
+print(f"\n✅ All seamlessly packed 4-panel figures successfully generated in:\n{OUT_DIR}")
+
+# %%%% out
+
+'''
+    Generating 4-panel overlays for 50 KPMP crops...
+    
+    ✅ All seamlessly packed 4-panel figures successfully generated in:
+    F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\kpmp\four-panel
+'''
+
+# %%'
 
