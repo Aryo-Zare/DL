@@ -367,110 +367,122 @@ print(f"Destination: {OUTPUT_INPUT_DIR}")
 
 # %% overlay _ pig
 
-# this creates 3-panel plots : original  _ base_SAM-3 _ LoRA
+# this generates 4-panel figures : raw, gt , nnU-net, LoRA.
 
-
-import os
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-from PIL import Image
-from pycocotools.coco import COCO
+from PIL import Image, ImageDraw, ImageFont
 
-# --- 1. PATH CONFIGURATION ---
-TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
-NNU_OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output")
+# --- 1. DIRECTORY SETUP (UPDATED FOR PIG DATASET) ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\pig")
+RAW_DIR = BASE_DIR / "raw_images"
+GT_DIR = BASE_DIR / "gt"
+LORA_DIR = BASE_DIR / "lora"
+NNU_DIR = BASE_DIR / "nnu"
 
-SINGLE_OUT_DIR = NNU_OUT_DIR / "single"
-TRIPLE_OUT_DIR = NNU_OUT_DIR / "triple"
+# User-requested output directory
+OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\pig")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-SINGLE_OUT_DIR.mkdir(parents=True, exist_ok=True)
-TRIPLE_OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# --- 2. LOAD GROUND TRUTH ANNOTATIONS ---
-coco_json_path = TEST_DIR / "_annotations.coco.json"
-coco = COCO(str(coco_json_path))
-
-# --- 3. PROCESSING LOOP ---
-img_ids = coco.getImgIds()
-print(f"Generating overlays for {len(img_ids)} test images...")
-
-for img_id in img_ids:
-    img_info = coco.loadImgs(img_id)[0]
-    orig_name = img_info["file_name"]
-    
-    # Clean filename to match how nnU-Net saved the predicted mask
-    case_id = Path(orig_name).stem
-    case_id = case_id.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "_")
-    
-    # Load Original RGB Image
-    img_path = TEST_DIR / orig_name
-    orig_img = Image.open(img_path).convert("RGB")
-    orig_arr = np.array(orig_img)
-    
-    # Load Ground Truth Mask (from COCO)
-    gt_mask = np.zeros((img_info["height"], img_info["width"]), dtype=np.uint8)
-    ann_ids = coco.getAnnIds(imgIds=img_id)
-    for ann in coco.loadAnns(ann_ids):
-        gt_mask = np.maximum(gt_mask, coco.annToMask(ann))
+# --- 2. OVERLAY FUNCTION ---
+def overlay_instances(base_img_arr, npy_path):
+    blended = base_img_arr.copy()
+    if not npy_path.exists():
+        return blended, 0
         
-    # Load nnU-Net Predicted Mask
-    nnu_mask_path = NNU_OUT_DIR / f"{case_id}.png"
-    if not nnu_mask_path.exists():
-        print(f"Warning: nnU-Net mask {case_id}.png not found. Skipping.")
-        continue
-    nnu_mask = np.array(Image.open(nnu_mask_path))
+    instances = np.load(npy_path)
+    num_instances = instances.shape[0]
     
-    # Create transparency layers for overlays (masks 0s, leaves 1s visible)
-    gt_overlay = np.ma.masked_where(gt_mask == 0, gt_mask)
-    nnu_overlay = np.ma.masked_where(nnu_mask == 0, nnu_mask)
+    for i in range(num_instances):
+        mask = instances[i]
+        color = np.random.randint(50, 255, (3,), dtype=np.uint8)
+        blended[mask] = (blended[mask] * 0.5 + color * 0.5).astype(np.uint8)
+        
+    return blended, num_instances
 
-    # ==========================================
-    # DELIVERABLE 1: SINGLE NNU-NET OVERLAY
-    # ==========================================
-    fig_single, ax_single = plt.subplots(figsize=(8, 8), dpi=150)
-    ax_single.imshow(orig_arr)
-    # Overlay nnU-Net mask in Red with 50% transparency
-    ax_single.imshow(nnu_overlay, cmap='autumn', alpha=0.5, interpolation='none')
-    ax_single.axis('off')
+# --- 3. HELPER TO ADD TITLE BARS ---
+def add_title_bar(img_arr, title_text):
+    h, w, c = img_arr.shape
+    bar_height = 50
+    titled_img = np.ones((h + bar_height, w, c), dtype=np.uint8) * 255
     
-    # Save tightly without white borders
-    single_save_path = SINGLE_OUT_DIR / f"{case_id}_nnu_overlay.png"
-    fig_single.savefig(single_save_path, bbox_inches='tight', pad_inches=0)
-    plt.close(fig_single)
+    titled_img[bar_height:, :, :] = img_arr
+    
+    pil_img = Image.fromarray(titled_img)
+    draw = ImageDraw.Draw(pil_img)
+    
+    try:
+        font = ImageFont.truetype("arialbd.ttf", 30) # Arial Bold, size 30
+    except IOError:
+        font = ImageFont.load_default()
+        
+    text_bbox = draw.textbbox((0, 0), title_text, font=font)
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
+    
+    x = (w - text_w) // 2
+    y = (bar_height - text_h) // 2 - 5
+    
+    draw.text((x, y), title_text, fill=(0, 0, 0), font=font)
+    
+    return np.array(pil_img)
 
-    # ==========================================
-    # DELIVERABLE 2: TRIPLE SUBPLOT FIGURE
-    # ==========================================
-    fig_trip, axes = plt.subplots(1, 3, figsize=(24, 8), dpi=150)
-    
-    # Subplot 1: Original Image
-    axes[0].imshow(orig_arr)
-    axes[0].set_title("Original Image", fontsize=16)
-    axes[0].axis('off')
-    
-    # Subplot 2: Ground Truth
-    axes[1].imshow(orig_arr)
-    # Overlay Ground Truth mask in Green
-    axes[1].imshow(gt_overlay, cmap='winter', alpha=0.5, interpolation='none')
-    axes[1].set_title("Ground Truth (Annotations)", fontsize=16)
-    axes[1].axis('off')
-    
-    # Subplot 3: nnU-Net Prediction
-    axes[2].imshow(orig_arr)
-    # Overlay nnU-Net mask in Red
-    axes[2].imshow(nnu_overlay, cmap='autumn', alpha=0.5, interpolation='none')
-    axes[2].set_title("nnU-Net Prediction", fontsize=16)
-    axes[2].axis('off')
-    
-    plt.tight_layout()
-    triple_save_path = TRIPLE_OUT_DIR / f"{case_id}_comparison.png"
-    fig_trip.savefig(triple_save_path, bbox_inches='tight')
-    plt.close(fig_trip)
+# --- 4. GENERATE 4-PANEL FIGURES NATIVELY ---
+raw_images = sorted(list(RAW_DIR.glob("*.png")))
+print(f"Generating 4-panel overlays for {len(raw_images)} Pig crops...")
 
-print("\n✅ Overlays successfully generated!")
-print(f"Single outputs saved to: {SINGLE_OUT_DIR}")
-print(f"Triple outputs saved to: {TRIPLE_OUT_DIR}")
+for img_path in raw_images:
+    case_id = img_path.stem
+    
+    gt_path = GT_DIR / f"{case_id}.npy"
+    lora_path = LORA_DIR / f"{case_id}.npy"
+    nnu_path = NNU_DIR / f"{case_id}.npy"
+    
+    raw_arr = np.array(Image.open(img_path).convert("RGB"))
+    
+    img_gt, n_gt = overlay_instances(raw_arr, gt_path)
+    img_nnu, n_nnu = overlay_instances(raw_arr, nnu_path)
+    img_lora, n_lora = overlay_instances(raw_arr, lora_path)
+    
+    # Add titles to each array
+    panel_1 = add_title_bar(raw_arr, "Original Image")
+    panel_2 = add_title_bar(img_gt, f"Ground Truth ({n_gt} tubules)")
+    panel_3 = add_title_bar(img_nnu, f"nnU-Net ({n_nnu} objects)")
+    panel_4 = add_title_bar(img_lora, f"LoRA SAM-3 ({n_lora} objects)")
+    
+    # 10px vertical gap, 40px horizontal gap
+    pad_h, pad_w = 10, 40
+    h, w, c = panel_1.shape
+    
+    # Stitch the top row
+    top_row = np.ones((h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    top_row[:, :w, :] = panel_1
+    top_row[:, w + pad_w:, :] = panel_2
+    
+    # Stitch the bottom row
+    bottom_row = np.ones((h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    bottom_row[:, :w, :] = panel_3
+    bottom_row[:, w + pad_w:, :] = panel_4
+    
+    # Stack rows vertically
+    final_grid = np.ones((h * 2 + pad_h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    final_grid[:h, :, :] = top_row
+    final_grid[h + pad_h:, :, :] = bottom_row
+    
+    # Save the final array directly to disk
+    final_img = Image.fromarray(final_grid)
+    final_img.save(OUT_DIR / f"{case_id}_comparison.png", format="PNG")
+
+print(f"\n✅ All seamlessly packed 4-panel figures for the Pig dataset successfully generated in:\n{OUT_DIR}")
+
+# %%% out
+
+'''
+    Generating 4-panel overlays for 10 Pig crops...
+    
+    ✅ All seamlessly packed 4-panel figures for the Pig dataset successfully generated in:
+    F:\OneDrive - Uniklinik RWTH Aachen\dl\dr__dl\nnU\test\output\pig
+'''
 
 # %% overlay kpmp
 
@@ -556,7 +568,7 @@ transform = v2.Compose([
     v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
 ])
 
-# --- 5. INFERENCE & VISUALIZATION LOOP ---
+#---- 5. INFERENCE & VISUALIZATION LOOP ---
 image_files = sorted(list(INPUT_DIR.glob("*.png")))
 print(f"\nStarting cross-domain evaluation on {len(image_files)} KPMP human biopsy images...")
 
@@ -598,7 +610,7 @@ for img_id_idx, img_path in enumerate(image_files):
     fig_single.savefig(single_save_path, bbox_inches='tight', pad_inches=0)
     plt.close(fig_single)
 
-    # ==== C. EXECUTE LoRA SAM-3 INFERENCE ====
+    #---- ==== C. EXECUTE LoRA SAM-3 INFERENCE ====
     resized_image = pil_image.resize((1008, 1008), PILImage.BILINEAR)
     image_tensor = transform(resized_image)
     image_obj = SAM3Image(data=image_tensor, objects=[], size=(1008, 1008))
@@ -680,13 +692,13 @@ print(f"Triple comparison plots saved to: {TRIPLE_OUT_DIR}")
 
 # %%% 4-panel
 
-# Gemini cell-759 : for customozing the gap between panels & subtitle sizes.
+# do not solely use matplotlib to plot pixel images !!
+    # PIL manages it.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import ImageGrid
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 # --- 1. DIRECTORY SETUP ---
 BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
@@ -714,7 +726,39 @@ def overlay_instances(base_img_arr, npy_path):
         
     return blended, num_instances
 
-# --- 3. GENERATE 4-PANEL FIGURES ---
+# --- 3. HELPER TO ADD TITLE BARS ---
+def add_title_bar(img_arr, title_text):
+    # Create a white bar at the top (50 pixels tall)
+    h, w, c = img_arr.shape
+    bar_height = 50
+    titled_img = np.ones((h + bar_height, w, c), dtype=np.uint8) * 255
+    
+    # Paste the original image below the bar
+    titled_img[bar_height:, :, :] = img_arr
+    
+    # Draw text using PIL
+    pil_img = Image.fromarray(titled_img)
+    draw = ImageDraw.Draw(pil_img)
+    
+    # Try to load a default font, otherwise fall back to basic
+    try:
+        font = ImageFont.truetype("arialbd.ttf", 30) # Arial Bold, size 30
+    except IOError:
+        font = ImageFont.load_default()
+        
+    # Center text
+    text_bbox = draw.textbbox((0, 0), title_text, font=font)
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
+    
+    x = (w - text_w) // 2
+    y = (bar_height - text_h) // 2 - 5 # slight vertical adjustment
+    
+    draw.text((x, y), title_text, fill=(0, 0, 0), font=font)
+    
+    return np.array(pil_img)
+
+# --- 4. GENERATE 4-PANEL FIGURES NATIVELY ---
 raw_images = sorted(list(RAW_DIR.glob("*.png")))
 print(f"Generating 4-panel overlays for {len(raw_images)} KPMP crops...")
 
@@ -728,39 +772,40 @@ for img_path in raw_images:
     raw_arr = np.array(Image.open(img_path).convert("RGB"))
     
     img_gt, n_gt = overlay_instances(raw_arr, gt_path)
-    img_lora, n_lora = overlay_instances(raw_arr, lora_path)
     img_nnu, n_nnu = overlay_instances(raw_arr, nnu_path)
+    img_lora, n_lora = overlay_instances(raw_arr, lora_path)
     
-    # THE FIX: Use ImageGrid to lock the axes to the image size
-    fig = plt.figure(figsize=(10, 10), dpi=200)
-    grid = ImageGrid(fig, 111, 
-                     nrows_ncols=(2, 2), 
-                     axes_pad=0.2,  # Fixed spacing between panels in inches ( The Gap Between Subplots ).
-                     share_all=True)
+    # Add titles to each array (Image height becomes 1024 + 50 = 1074)
+    panel_1 = add_title_bar(raw_arr, "Original Image")
+    panel_2 = add_title_bar(img_gt, f"Ground Truth ({n_gt} tubules)")
+    panel_3 = add_title_bar(img_nnu, f"nnU-Net ({n_nnu} objects)")
+    panel_4 = add_title_bar(img_lora, f"LoRA SAM-3 ({n_lora} objects)")
     
-    # Grid[0] -> Top-Left
-    grid[0].imshow(raw_arr)
-    grid[0].set_title("Original Image", fontsize=9, fontweight="bold", pad=3)
+    # Add a 10-pixel white border to the right of the left panels and bottom of top panels
+    pad_h, pad_w = 10, 40
+    h, w, c = panel_1.shape
     
-    # Grid[1] -> Top-Right
-    grid[1].imshow(img_gt)
-    grid[1].set_title(f"Ground Truth ({n_gt} tubules)", fontsize=9, fontweight="bold", pad=3)
+    # Stitch the top row
+    top_row = np.ones((h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    top_row[:, :w, :] = panel_1
+    top_row[:, w + pad_w:, :] = panel_2
     
-    # Grid[2] -> Bottom-Left (Clockwise from Bottom-Right = nnU-Net)
-    grid[2].imshow(img_nnu)
-    grid[2].set_title(f"nnU-Net ({n_nnu} objects)", fontsize=9, fontweight="bold", pad=3)
+    # Stitch the bottom row
+    bottom_row = np.ones((h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    bottom_row[:, :w, :] = panel_3
+    bottom_row[:, w + pad_w:, :] = panel_4
     
-    # Grid[3] -> Bottom-Right (Clockwise from Top-Right = LoRA)
-    grid[3].imshow(img_lora)
-    grid[3].set_title(f"LoRA SAM-3 ({n_lora} objects)", fontsize=9, fontweight="bold", pad=3)
+    # Stack rows vertically with a padding gap
+    final_grid = np.ones((h * 2 + pad_h, w * 2 + pad_w, c), dtype=np.uint8) * 255
+    final_grid[:h, :, :] = top_row
+    final_grid[h + pad_h:, :, :] = bottom_row
     
-    for ax in grid:
-        ax.axis('off')
-        
-    fig.savefig(OUT_DIR / f"{case_id}_comparison.png", bbox_inches='tight', pad_inches=0.05)
-    plt.close(fig)
+    # Save the final array directly to disk (No Matplotlib compression!)
+    final_img = Image.fromarray(final_grid)
+    final_img.save(OUT_DIR / f"{case_id}_comparison.png", format="PNG")
 
 print(f"\n✅ All seamlessly packed 4-panel figures successfully generated in:\n{OUT_DIR}")
+
 
 # %%%% out
 
