@@ -42,10 +42,10 @@ WEIGHTS_PATH = Path(r"F:\temp\LoRA_output\2026-08-20\best_lora_weights.pt")
     following the policy of saving masks separately, as .npy files, this script does this for all data ( with exceptions ) & saves them to : 
       
     
-    PS C:\Users\User> tree 'F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output'
+    PS C:\Users\User> tree 'F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output'
     Folder PATH listing for volume F
     Volume serial number is 3226-77BB
-    F:\ONEDRIVE - UNIKLINIK RWTH AACHEN\DL\MANUSCRIPT\SINLGE_OUTPUT
+    F:\ONEDRIVE - UNIKLINIK RWTH AACHEN\DL\MANUSCRIPT\single_output
     ├───kpmp
     │   ├───gt
     │   ├───lora
@@ -95,7 +95,7 @@ from lora_layers import LoRAConfig, apply_lora_to_model, load_lora_weights
 from validate_sam3_lora import apply_sam3_nms, move_to_device
 
 #---- 2. CONFIGURATION & DIRECTORIES ---
-MANUSCRIPT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+MANUSCRIPT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output")
 
 # Input Sources
 PIG_TEST_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\SAM_3\LoRA\data\coco_dataset\test")
@@ -338,7 +338,7 @@ print(f"\n[5/5] Extraction Complete. All masks successfully saved to:\n{MANUSCRI
 
 # %%% out
 
-# terminal output was saved to  :  F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output  |  terminal_output__.txt
+# terminal output was saved to  :  F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output  |  terminal_output__.txt
 
 # %% test reconstruct masks from .npy files.
 
@@ -350,7 +350,7 @@ from pathlib import Path
 from PIL import Image
 
 # --- 1. DIRECTORY SETUP ---
-BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output")
 TEST_OUT_DIR = BASE_DIR / "test_figure"
 
 PIG_OUT = TEST_OUT_DIR / "pig"
@@ -461,7 +461,7 @@ from scipy.sparse.csgraph import connected_components
 
 # --- 1. PATH TO GROUND TRUTH FOLDER ---
 # Currently running on the Pig GT since KPMP annotations are pending
-GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\pig\gt")
+GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\pig\gt")
 
 print(f"Scanning for fragmented annotations in: {GT_DIR}\n")
 
@@ -518,7 +518,7 @@ print("\n✅ Ground truth instances successfully merged and updated!")
 # %%% out
 
 '''
-    Scanning for fragmented annotations in: F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\pig\gt
+    Scanning for fragmented annotations in: F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\pig\gt
     
     Checked ZC21_1__crop_1__chaotic__: 3 objects. No overlapping fragments found.
     Fixed ZC21_1__crop_2__packed__: Merged 14 fragments down to 11 real objects.
@@ -688,8 +688,8 @@ from PIL import Image, ImageDraw
 from scipy.sparse.csgraph import connected_components
 
 # --- 1. DIRECTORIES ---
-RAW_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\raw_images")
-GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\gt")
+RAW_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp\raw_images")
+GT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp\gt")
 
 
 print(f"Scanning for GeoJSON annotations in: {GT_DIR}\n")
@@ -793,7 +793,7 @@ print("\n✅ KPMP Ground Truth conversion and overlap-merging complete!")
 from pathlib import Path
 import shutil
 
-src = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp\gt")
+src = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp\gt")
 dst = src / "geojson"
 
 # Create destination folder if it doesn't exist
@@ -821,7 +821,7 @@ from pathlib import Path
 from PIL import Image
 
 # --- 1. DIRECTORY SETUP ---
-KPMP_BASE = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+KPMP_BASE = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp")
 RAW_DIR = KPMP_BASE / "raw_images"
 GT_DIR = KPMP_BASE / "gt"
 OUT_DIR = GT_DIR / "test_overlay_gt"
@@ -891,7 +891,7 @@ import pandas as pd
 from pathlib import Path
 
 # --- 1. SETUP PATHS ---
-BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output")
 OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1281,7 +1281,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # --- 1. SETUP PATHS ---
-BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp")
 GT_DIR = BASE_DIR / "gt"
 OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
 
@@ -1384,7 +1384,7 @@ from scipy.stats import wilcoxon
 from pathlib import Path
 
 # --- 1. SETUP ---
-BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output\kpmp")
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp")
 GT_DIR = BASE_DIR / "gt"
 
 def analyze_errors(gt_stack, pred_stack):
@@ -1479,7 +1479,7 @@ import pandas as pd
 from pathlib import Path
 
 # --- 1. SETUP PATHS ---
-BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\sinlge_output")
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output")
 METRICS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
 PKL_PATH = METRICS_DIR / "segmentation_metrics_master.pkl"
 CSV_PATH = METRICS_DIR / "segmentation_metrics_master.csv"
@@ -1557,6 +1557,305 @@ df.to_csv(CSV_PATH, index=False)
 print("\n✅ Master metrics successfully updated!")
 print(f"Added 'Fragments' and 'Hallucinations' to {len(df)} rows.")
 print("You can verify the CSV file in Excel.")
+
+# %% IOA ( inter-observer agreemen )
+
+# Gemini cell-846
+
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from PIL import Image, ImageDraw
+from scipy.sparse.csgraph import connected_components
+
+# --- 1. DIRECTORY SETUP ---
+JAN_GEOJSON_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\IOA\Jan\annotations")
+MANUSCRIPT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output")
+OUT_DIR = JAN_GEOJSON_DIR.parent / "results"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Save rasterized .npy stacks for Observer 2 (Jan) for reproducibility
+JAN_NPY_DIR = OUT_DIR / "jan_npy"
+JAN_NPY_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# --- 2. HELPER FUNCTIONS ---
+def clean_case_id(filename_stem: str) -> str:
+    """Standardizes case identifiers across cohorts."""
+    return filename_stem.replace(" ", "_").replace("(", "").replace(")", "").replace(",", "_")
+
+
+def find_matching_gt(geo_path: Path):
+    """Finds the corresponding dataset ('pig' or 'kpmp'), GT .npy path, and image size."""
+    stem = geo_path.stem
+    # Strip '.png' if QuPath exported as 'imagename.png.geojson'
+    if stem.lower().endswith(".png"):
+        stem = stem[:-4]
+
+    candidates = [stem, clean_case_id(stem)]
+    # Also strip 'final_' or 'finale_' if present
+    for prefix in ["final_", "finale_"]:
+        if stem.startswith(prefix):
+            stripped = stem[len(prefix):]
+            candidates.extend([stripped, clean_case_id(stripped)])
+
+    for dataset in ["pig", "kpmp"]:
+        gt_folder = MANUSCRIPT_DIR / dataset / "gt"
+        raw_folder = MANUSCRIPT_DIR / dataset / "raw_images"
+        for cand in candidates:
+            gt_path = gt_folder / f"{cand}.npy"
+            if gt_path.exists():
+                raw_img_path = raw_folder / f"{cand}.png"
+                if raw_img_path.exists():
+                    with Image.open(raw_img_path) as img:
+                        w, h = img.size
+                else:
+                    _, h, w = np.load(gt_path).shape
+                return dataset, cand, gt_path, (w, h)
+
+    return None, stem, None, (1024, 1024)
+
+
+def rasterize_geojson_to_stack(geojson_path: Path, width=1024, height=1024):
+    """Rasterizes QuPath GeoJSON polygons and merges overlapping fragments into (N, H, W) bool array."""
+    with open(geojson_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    features = data if isinstance(data, list) else data.get('features', [])
+    raw_masks = []
+
+    for feature in features:
+        geom = feature.get('geometry', {})
+        if not geom:
+            continue
+        geom_type = geom.get('type')
+        coords = geom.get('coordinates', [])
+        if not coords:
+            continue
+
+        if geom_type == 'Polygon':
+            mask_img = Image.new('L', (width, height), 0)
+            draw = ImageDraw.Draw(mask_img)
+            xy = [tuple(pt[:2]) for pt in coords[0]]
+            if len(xy) >= 3:
+                draw.polygon(xy, outline=1, fill=1)
+                m = np.array(mask_img, dtype=bool)
+                if np.any(m):
+                    raw_masks.append(m)
+
+        elif geom_type == 'MultiPolygon':
+            mask_img = Image.new('L', (width, height), 0)
+            draw = ImageDraw.Draw(mask_img)
+            valid = False
+            for poly in coords:
+                xy = [tuple(pt[:2]) for pt in poly[0]]
+                if len(xy) >= 3:
+                    draw.polygon(xy, outline=1, fill=1)
+                    valid = True
+            if valid:
+                m = np.array(mask_img, dtype=bool)
+                if np.any(m):
+                    raw_masks.append(m)
+
+    n_init = len(raw_masks)
+    if n_init == 0:
+        return np.zeros((0, height, width), dtype=bool)
+
+    # Merge overlapping polygon fragments belonging to the same instance
+    overlap_matrix = np.zeros((n_init, n_init), dtype=bool)
+    for i in range(n_init):
+        overlap_matrix[i, i] = True
+        for j in range(i + 1, n_init):
+            has_overlap = np.any(raw_masks[i] & raw_masks[j])
+            overlap_matrix[i, j] = has_overlap
+            overlap_matrix[j, i] = has_overlap
+
+    n_components, labels = connected_components(overlap_matrix, directed=False)
+    merged_masks = []
+    raw_stack = np.array(raw_masks)
+    for comp_id in range(n_components):
+        idx = np.where(labels == comp_id)[0]
+        merged_masks.append(np.any(raw_stack[idx], axis=0))
+
+    return np.stack(merged_masks, axis=0).astype(bool)
+
+
+def get_pixel_metrics_and_kappa(stack1, stack2):
+    """Calculates Global IoU, Global Dice, and Pixel-wise Cohen's Kappa."""
+    flat1 = np.any(stack1, axis=0) if stack1.shape[0] > 0 else np.zeros(stack1.shape[1:], dtype=bool)
+    flat2 = np.any(stack2, axis=0) if stack2.shape[0] > 0 else np.zeros(stack2.shape[1:], dtype=bool)
+
+    tp = np.logical_and(flat1, flat2).sum()
+    fp = np.logical_and(~flat1, flat2).sum()
+    fn = np.logical_and(flat1, ~flat2).sum()
+    tn = np.logical_and(~flat1, ~flat2).sum()
+
+    union = tp + fp + fn
+    if union == 0:
+        return 1.0, 1.0, 1.0
+
+    iou = tp / union
+    dice = (2.0 * tp) / (2.0 * tp + fp + fn)
+
+    # Cohen's Kappa calculation
+    total = float(tp + fp + fn + tn)
+    po = (tp + tn) / total
+    pe = (((tp + fn) / total) * ((tp + fp) / total)) + (((fp + tn) / total) * ((fn + tn) / total))
+    kappa = (po - pe) / (1.0 - pe) if (1.0 - pe) > 0 else 1.0
+
+    return iou, dice, kappa
+
+
+def get_instance_f1(stack1, stack2):
+    """Calculates symmetric Instance F1 (IoU >= 0.5) and Best-Match IoU."""
+    n1, n2 = stack1.shape[0], stack2.shape[0]
+    if n1 == 0 and n2 == 0:
+        return 0, 0, 0, 1.0, 1.0
+    if n1 == 0 or n2 == 0:
+        return 0, n2, n1, 0.0, 0.0
+
+    iou_matrix = np.zeros((n1, n2))
+    for i in range(n1):
+        for j in range(n2):
+            inter = np.logical_and(stack1[i], stack2[j]).sum()
+            if inter > 0:
+                union = np.logical_or(stack1[i], stack2[j]).sum()
+                iou_matrix[i, j] = inter / union
+
+    best_match_iou = np.mean(np.max(iou_matrix, axis=1))
+
+    tp = 0
+    matched_j = set()
+    for i in range(n1):
+        best_j = np.argmax(iou_matrix[i])
+        if iou_matrix[i, best_j] >= 0.5 and best_j not in matched_j:
+            tp += 1
+            matched_j.add(best_j)
+
+    fp = n2 - tp
+    fn = n1 - tp
+    f1 = (2.0 * tp) / (2.0 * tp + fp + fn) if (2.0 * tp + fp + fn) > 0 else 0.0
+    return tp, fp, fn, f1, best_match_iou
+
+
+# --- 3. PROCESS ALL GEOJSON FILES ---
+geojson_files = sorted(list(JAN_GEOJSON_DIR.glob("*.geojson")))
+print(f"Found {len(geojson_files)} GeoJSON files in:\n{JAN_GEOJSON_DIR}\n")
+
+records = []
+for geo_path in geojson_files:
+    dataset, case_id, gt_path, (w, h) = find_matching_gt(geo_path)
+    if gt_path is None:
+        print(f"  [WARNING] Could not find matching GT .npy for: {geo_path.name}")
+        continue
+
+    gt_stack = np.load(gt_path)
+    jan_stack = rasterize_geojson_to_stack(geo_path, width=w, height=h)
+
+    # Save Jan's stack
+    np.save(JAN_NPY_DIR / f"{dataset}__{case_id}.npy", jan_stack)
+
+    iou, dice, kappa = get_pixel_metrics_and_kappa(gt_stack, jan_stack)
+    tp, fp, fn, inst_f1, bm_iou = get_instance_f1(gt_stack, jan_stack)
+
+    n_r1 = gt_stack.shape[0]
+    n_r2 = jan_stack.shape[0]
+
+    records.append({
+        "Dataset": dataset,
+        "Image_ID": case_id,
+        "Rater1_Count": n_r1,
+        "Rater2_Count": n_r2,
+        "Count_Abs_Error": abs(n_r1 - n_r2),
+        "Global_Dice": dice,
+        "Global_IoU": iou,
+        "Cohens_Kappa": kappa,
+        "Instance_F1": inst_f1,
+        "Best_Match_IoU": bm_iou,
+        "TP": tp,
+        "FP": fp,
+        "FN": fn
+    })
+    print(f"  [{dataset.upper()}] {case_id}: R1={n_r1}, R2={n_r2} | Dice={dice:.3f}, Kappa={kappa:.3f}, Inst_F1={inst_f1:.3f}")
+
+# --- 4. SUMMARY STATISTICS (MEDIAN & IQR) ---
+df_ioa = pd.DataFrame(records)
+df_ioa.to_csv(OUT_DIR / "ioa_per_image_metrics.csv", index=False)
+
+print("\n" + "="*75)
+print("INTER-OBSERVER AGREEMENT SUMMARY (MEDIAN [IQR: Q25 - Q75])")
+print("="*75)
+
+metrics_to_summarize = ["Global_Dice", "Global_IoU", "Cohens_Kappa", "Instance_F1", "Count_Abs_Error"]
+summary_rows = []
+
+for ds in ["pig", "kpmp"]:
+    sub = df_ioa[df_ioa["Dataset"] == ds]
+    if sub.empty:
+        continue
+    print(f"\nCohort: {ds.upper()} (N={len(sub)})")
+    for m in metrics_to_summarize:
+        med = sub[m].median()
+        q25 = sub[m].quantile(0.25)
+        q75 = sub[m].quantile(0.75)
+        iqr = q75 - q25
+        print(f"  {m:<18}: {med:.3f} (IQR: {q25:.3f}–{q75:.3f}, Δ={iqr:.3f})")
+        summary_rows.append({
+            "Dataset": ds, "N": len(sub), "Metric": m,
+            "Median": med, "Q25": q25, "Q75": q75, "IQR": iqr
+        })
+
+pd.DataFrame(summary_rows).to_csv(OUT_DIR / "ioa_summary_table.csv", index=False)
+print(f"\n✅ Saved detailed CSVs to: {OUT_DIR}")
+
+# %%% out
+
+'''
+        Found 20 GeoJSON files in:
+        F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\IOA\Jan\annotations
+        
+          [KPMP] cf02f9bc-d5d5-43e5-8f8b-0b1ca7bc9e6d_S-2410-004816_PAS_2of2: R1=13, R2=13 | Dice=0.921, Kappa=0.879, Inst_F1=1.000
+          [KPMP] d41d2dcc-548c-42e0-b93a-28504c9c7847_S-2006-004859_PAS_1of2: R1=12, R2=14 | Dice=0.915, Kappa=0.781, Inst_F1=0.923
+          [KPMP] d6c59b4e-c198-4bcc-bd2e-a819cc69ec63_S-2407-010897_PAS_1of2: R1=11, R2=9 | Dice=0.870, Kappa=0.787, Inst_F1=0.900
+          [KPMP] d8c05915-3d30-4499-903b-7e0657d93994_S-2107-011577_PAS_1of1: R1=16, R2=16 | Dice=0.855, Kappa=0.648, Inst_F1=0.812
+          [KPMP] d95597a7-1725-4b1e-a143-035d020fb3cf_S-2503-010649_PAS_2of2: R1=13, R2=13 | Dice=0.944, Kappa=0.771, Inst_F1=0.923
+          [KPMP] daa5909d-544b-4440-a899-5bfa6134ee22_S-2303-006476_PAS_2of2: R1=18, R2=18 | Dice=0.927, Kappa=0.760, Inst_F1=0.833
+          [KPMP] df1f1e9e-193a-4f4c-918d-cb024a2278ab_S-2312-004298_PAS_1of2: R1=10, R2=17 | Dice=0.828, Kappa=0.612, Inst_F1=0.741
+          [KPMP] e2f5cf51-05cf-4e0f-8233-651651198191_S-2206-008089_PAS_4of6: R1=11, R2=16 | Dice=0.905, Kappa=0.759, Inst_F1=0.815
+          [KPMP] ee7a05b3-e16b-4bec-9d9b-79b6c9a23172_S-2303-014329_PAS_2of2: R1=11, R2=11 | Dice=0.950, Kappa=0.854, Inst_F1=1.000
+          [KPMP] f3503de1-354e-4c06-8b5c-b67c3df9c387_S-2203-016179_PAS_2of2: R1=8, R2=9 | Dice=0.939, Kappa=0.838, Inst_F1=0.941
+          [PIG] ZC21_1__crop_1__chaotic__: R1=3, R2=6 | Dice=0.792, Kappa=0.626, Inst_F1=0.667
+          [PIG] ZC21_1__crop_2__packed__: R1=11, R2=13 | Dice=0.922, Kappa=0.798, Inst_F1=0.917
+          [PIG] ZC36_1__crop_1__packed__: R1=5, R2=5 | Dice=0.954, Kappa=0.868, Inst_F1=1.000
+          [PIG] ZC36_1__crop_2__packed__: R1=5, R2=7 | Dice=0.829, Kappa=0.752, Inst_F1=0.667
+          [PIG] ZC38_1__crop_1__chaotic__: R1=9, R2=9 | Dice=0.913, Kappa=0.658, Inst_F1=1.000
+          [PIG] ZC38_1__crop_2__chaotic__: R1=13, R2=13 | Dice=0.944, Kappa=0.822, Inst_F1=0.846
+          [PIG] ZC39_1__crop_1__chaotic__: R1=9, R2=11 | Dice=0.837, Kappa=0.675, Inst_F1=0.900
+          [PIG] ZC39_1__crop_2__packed__: R1=6, R2=7 | Dice=0.943, Kappa=0.827, Inst_F1=0.923
+          [PIG] ZC44_1__crop_1__packed__: R1=11, R2=9 | Dice=0.875, Kappa=0.631, Inst_F1=0.900
+          [PIG] ZC44_1__crop_2__packed__: R1=10, R2=11 | Dice=0.910, Kappa=0.545, Inst_F1=0.952
+        
+        ===========================================================================
+        INTER-OBSERVER AGREEMENT SUMMARY (MEDIAN [IQR: Q25 - Q75])
+        ===========================================================================
+        
+        Cohort: PIG (N=10)
+          Global_Dice       : 0.912 (IQR: 0.846–0.938, Δ=0.092)
+          Global_IoU        : 0.837 (IQR: 0.734–0.884, Δ=0.150)
+          Cohens_Kappa      : 0.713 (IQR: 0.638–0.816, Δ=0.178)
+          Instance_F1       : 0.908 (IQR: 0.860–0.945, Δ=0.085)
+          Count_Abs_Error   : 1.500 (IQR: 0.250–2.000, Δ=1.750)
+        
+        Cohort: KPMP (N=10)
+          Global_Dice       : 0.918 (IQR: 0.879–0.936, Δ=0.057)
+          Global_IoU        : 0.848 (IQR: 0.784–0.879, Δ=0.096)
+          Cohens_Kappa      : 0.776 (IQR: 0.759–0.826, Δ=0.067)
+          Instance_F1       : 0.912 (IQR: 0.819–0.937, Δ=0.117)
+          Count_Abs_Error   : 0.500 (IQR: 0.000–2.000, Δ=2.000)
+        
+        ✅ Saved detailed CSVs to: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\IOA\Jan\results
+'''
 
 # %%'
 

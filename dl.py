@@ -445,6 +445,8 @@ print("Done. All .svs files pooled with numbered suffixes.")
     # Copying: D:\PAS_kidney_pig\extract_all__rename\2024-02-08\ZC68.svs  -->  D:\PAS_kidney_pig\pool\ZC68_1.svs
     # ...
 
+
+# D:\PAS_kidney_pig\pool  :  there is a shortcut .txt file : the dictionary is saved there.
 name_count
     # Out[3]: 
     # {'ZC17': 1,
@@ -462,6 +464,13 @@ freq = Counter(name_count.values())
 
 freq
     # Out[10]: Counter({2: 38, 1: 21})
+
+len(name_count)
+    # Out[9]: 59
+# 38 + 21 = 59 unique animals.
+    # 38 * 2 : some animals had 2 sections per kdiney  cortex & medulla.
+    # these correspond to the original .svs folder : D:\PAS_kidney_pig\pool .
+    
 
 #=========================================
 
