@@ -1263,6 +1263,132 @@ print(results_df.to_string(index=False))
      Pig (N=10) lora vs SAM_3_AMG Count_Abs_Error     2.500     3.000  0.7656                   No
 '''
 
+# %%%% clustered Wilcoxon test
+
+# this is for pig data ( figures 2 & 4 ).
+# reason : there are 2 crops / WSI : hence, crops are not fully independent.
+    # hence, violating the independence assumption.
+    # the following tests account for this.
+# Gemini cell-857
+
+import numpy as np
+import pandas as pd
+from scipy.stats import wilcoxon, rankdata, norm, ttest_rel
+from pathlib import Path
+import warnings
+warnings.filterwarnings("ignore")
+
+# --- 1. LOAD MASTER METRICS ---
+METRICS_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+PKL_PATH = METRICS_DIR / "segmentation_metrics_master.pkl"
+df = pd.read_pickle(PKL_PATH)
+
+if "Best_Match_Dice" not in df.columns:
+    df["Best_Match_Dice"] = (2 * df["Best_Match_IoU"]) / (1 + df["Best_Match_IoU"])
+
+pig_df = df[df["Dataset"] == "pig"].copy()
+# Extract WSI identifier (e.g., 'ZC21_1' from 'ZC21_1__crop_1__chaotic__')
+pig_df["WSI_ID"] = pig_df["Image_ID"].apply(lambda x: x.split("__crop_")[0])
+
+
+# --- 2. CLUSTERED WILCOXON SIGNED-RANK TEST (ROSNER-GLYNN-LEE / DATTA-SATTEN) ---
+def clustered_wilcoxon(vals_a, vals_b, cluster_ids):
+    """
+    Computes the Clustered Wilcoxon Signed-Rank Test (Rosner et al., 2006)
+    accounting for multiple crops per WSI.
+    """
+    diffs = np.asarray(vals_a) - np.asarray(vals_b)
+    clusters = np.asarray(cluster_ids)
+
+    # Drop exact zero differences (standard Wilcoxon convention)
+    non_zero = diffs != 0
+    if np.sum(non_zero) == 0:
+        return 1.0
+
+    d_nz = diffs[non_zero]
+    c_nz = clusters[non_zero]
+
+    # Rank absolute differences across all non-zero crops and apply signs
+    signed_ranks = np.sign(d_nz) * rankdata(np.abs(d_nz), method="average")
+
+    # Sum signed ranks within each independent WSI cluster
+    unique_clusters = np.unique(c_nz)
+    cluster_rank_sums = np.array([
+        np.sum(signed_ranks[c_nz == cid]) for cid in unique_clusters
+    ])
+
+    # Cluster-robust variance of the total signed-rank sum
+    total_stat = np.sum(cluster_rank_sums)
+    var_stat = np.sum(cluster_rank_sums ** 2)
+
+    if var_stat == 0:
+        return 1.0
+
+    z_stat = total_stat / np.sqrt(var_stat)
+    p_val_two_sided = 2.0 * (1.0 - norm.cdf(abs(z_stat)))
+    return p_val_two_sided
+
+
+# --- 3. RUN COMPARISONS FOR FIGURE 4 & FIGURE 2 ---
+comparisons = [
+    ("Figure 4 (Pig: LoRA vs nnU-Net)", "lora", "nnu",
+     ["Global_Dice", "Global_IoU", "Instance_F1", "Count_Abs_Error"]),
+    ("Figure 2 (Pig: LoRA vs Base AMG)", "lora", "SAM_3_AMG",
+     ["Best_Match_Dice", "Best_Match_IoU", "Instance_F1", "Count_Abs_Error"])
+]
+
+rows = []
+for label, m_a, m_b, metrics in comparisons:
+    sub_a = pig_df[pig_df["Method"] == m_a].set_index("Image_ID")
+    sub_b = pig_df[pig_df["Method"] == m_b].set_index("Image_ID")
+    common = sub_a.index.intersection(sub_b.index)
+    sub_a, sub_b = sub_a.loc[common], sub_b.loc[common]
+    clusters = sub_a["WSI_ID"].values
+
+    for metric in metrics:
+        a = sub_a[metric].values
+        b = sub_b[metric].values
+
+        # 1. Standard crop-level Wilcoxon (N=10 crops)
+        _, p_std_wilc = wilcoxon(a, b)
+
+        # 2. Clustered Wilcoxon signed-rank test (N=10 crops across 5 WSIs)
+        p_clust_wilc = clustered_wilcoxon(a, b, clusters)
+
+        # 3. Balanced LMM / WSI-mean paired t-test (N=5 independent WSIs, df=4)
+        wsi_a = sub_a.groupby("WSI_ID")[metric].mean()
+        wsi_b = sub_b.groupby("WSI_ID")[metric].mean().loc[wsi_a.index]
+        _, p_lmm = ttest_rel(wsi_a, wsi_b)
+
+        rows.append({
+            "Comparison": label,
+            "Metric": metric,
+            "Median_A (Crop)": round(np.median(a), 3),
+            "Median_B (Crop)": round(np.median(b), 3),
+            "p_Wilcoxon_Unadjusted": round(p_std_wilc, 4),
+            "p_Clustered_Wilcoxon": round(p_clust_wilc, 4),
+            "p_LMM_WSI_Adjusted": round(p_lmm, 4)
+        })
+
+res_df = pd.DataFrame(rows)
+print(res_df.to_string(index=False))
+
+# %%%%% out
+
+'''
+
+                      Comparison          Metric  Median_A (Crop)  Median_B (Crop)  p_Wilcoxon_Unadjusted  p_Clustered_Wilcoxon  p_LMM_WSI_Adjusted
+ Figure 4 (Pig: LoRA vs nnU-Net)     Global_Dice            0.932            0.935                 1.0000                0.9647              0.9678
+ Figure 4 (Pig: LoRA vs nnU-Net)      Global_IoU            0.872            0.878                 0.8457                0.8256              0.9485
+ Figure 4 (Pig: LoRA vs nnU-Net)     Instance_F1            0.836            0.723                 0.2617                0.2819              0.3342
+ Figure 4 (Pig: LoRA vs nnU-Net) Count_Abs_Error            2.500            5.000                 0.3438                0.2719              0.3572
+Figure 2 (Pig: LoRA vs Base AMG) Best_Match_Dice            0.963            0.544                 0.0020                0.0332              0.0003
+Figure 2 (Pig: LoRA vs Base AMG)  Best_Match_IoU            0.929            0.373                 0.0020                0.0332              0.0000
+Figure 2 (Pig: LoRA vs Base AMG)     Instance_F1            0.836            0.250                 0.0020                0.0345              0.0016
+Figure 2 (Pig: LoRA vs Base AMG) Count_Abs_Error            2.500            3.000                 0.7656                0.7472              0.7619
+
+'''
+
 # %%% Diagnosis
 
 '''
@@ -1857,7 +1983,755 @@ print(f"\n✅ Saved detailed CSVs to: {OUT_DIR}")
         ✅ Saved detailed CSVs to: F:\OneDrive - Uniklinik RWTH Aachen\dl\segmentation\IOA\Jan\results
 '''
 
-# %%'
+# %% size of hallucinations
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+from scipy.stats import mannwhitneyu, wilcoxon
+import warnings
+warnings.filterwarnings("ignore")
+
+#---- 1. SETUP PATHS & CONSTANTS ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp")
+GT_DIR = BASE_DIR / "gt"
+OUT_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+MPP = 0.252  # Microns per pixel at 40x magnification
+PX_TO_UM2 = MPP ** 2  # ~0.063504 um^2 per pixel
+
+#---- 2. EXTRACT HALLUCINATION SIZES & GT SIZES ---
+gt_files = sorted(list(GT_DIR.glob("*.npy")))
+
+hall_records = []       # Object-level (each individual hallucination)
+gt_sizes_px = []        # Real GT tubule sizes for reference
+crop_records = []       # Crop-level summary (N=50)
+
+for gt_path in gt_files:
+    case_id = gt_path.stem
+    gt_stack = np.load(gt_path)
+    n_gt = gt_stack.shape[0]
+
+    # Record GT object sizes
+    for i in range(n_gt):
+        gt_sizes_px.append(int(np.sum(gt_stack[i])))
+
+    # Loop over both methods explicitly
+    for method, method_label in [("lora", "LoRA SAM-3"), ("nnu", "nnU-Net")]:
+        pred_path = BASE_DIR / method / f"{case_id}.npy"
+        if not pred_path.exists():
+            continue
+        pred_stack = np.load(pred_path)
+        n_pred = pred_stack.shape[0]
+
+        if n_pred == 0:
+            crop_records.append({
+                "Image_ID": case_id, "Method": method,
+                "Hall_Count": 0, "Total_Hall_Area_Px": 0, "Median_Hall_Area_Px": np.nan
+            })
+            continue
+
+        # Calculate max IoU of each prediction with any GT object
+        if n_gt == 0:
+            max_iou_per_pred = np.zeros(n_pred)
+        else:
+            iou_matrix = np.zeros((n_gt, n_pred))
+            for i in range(n_gt):
+                for j in range(n_pred):
+                    inter = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+                    if inter > 0:
+                        union = np.logical_or(gt_stack[i], pred_stack[j]).sum()
+                        iou_matrix[i, j] = inter / union
+            max_iou_per_pred = np.max(iou_matrix, axis=0)
+
+        # Pure Hallucinations: max_iou < 0.01
+        hall_indices = np.where(max_iou_per_pred < 0.01)[0]
+        this_crop_hall_areas = []
+
+        for j in hall_indices:
+            area_px = int(np.sum(pred_stack[j]))
+            this_crop_hall_areas.append(area_px)
+            hall_records.append({
+                "Image_ID": case_id,
+                "Method": method,
+                "Method_Display": method_label,
+                "Area_Pixels": area_px,
+                "Area_um2": area_px * PX_TO_UM2
+            })
+
+        crop_records.append({
+            "Image_ID": case_id,
+            "Method": method,
+            "Hall_Count": len(this_crop_hall_areas),
+            "Total_Hall_Area_Px": int(np.sum(this_crop_hall_areas)),
+            "Median_Hall_Area_Px": float(np.median(this_crop_hall_areas)) if this_crop_hall_areas else np.nan
+        })
+
+# Ensure DataFrame is safely created with columns even if empty
+if len(hall_records) > 0:
+    df_halls = pd.DataFrame(hall_records)
+else:
+    df_halls = pd.DataFrame(columns=["Image_ID", "Method", "Method_Display", "Area_Pixels", "Area_um2"])
+
+df_crops = pd.DataFrame(crop_records)
+gt_sizes_px = np.array(gt_sizes_px) if len(gt_sizes_px) > 0 else np.array([0])
+
+#---- 3. PRINT OBJECT-LEVEL & CROP-LEVEL STATISTICS ---
+print("=" * 75)
+print("1. OBJECT-LEVEL HALLUCINATION SIZE DISTRIBUTION (KPMP, N=50 CROPS)")
+print("=" * 75)
+
+lora_px = df_halls[df_halls["Method"] == "lora"]["Area_Pixels"].values if not df_halls.empty else np.array([])
+nnu_px = df_halls[df_halls["Method"] == "nnu"]["Area_Pixels"].values if not df_halls.empty else np.array([])
+
+for label, arr_px in [
+    ("LoRA SAM-3 Hallucinations", lora_px),
+    ("nnU-Net Hallucinations", nnu_px),
+    ("Ground-Truth Real Tubules", gt_sizes_px)
+]:
+    if len(arr_px) > 0:
+        q25, med, q75 = np.percentile(arr_px, [25, 50, 75])
+        p5, p95 = np.percentile(arr_px, [5, 95])
+        print(f"\n{label} (n = {len(arr_px)} objects):")
+        print(f"  Pixels : Median = {med:,.0f} px (IQR: {q25:,.0f} – {q75:,.0f} px | 5th–95th: {p5:,.0f} – {p95:,.0f} px)")
+        print(f"  um^2   : Median = {med*PX_TO_UM2:,.1f} um^2 (IQR: {q25*PX_TO_UM2:,.1f} – {q75*PX_TO_UM2:,.1f} um^2)")
+    else:
+        print(f"\n{label}: No objects found.")
+
+if len(lora_px) > 0 and len(nnu_px) > 0:
+    u_stat, p_mwu = mannwhitneyu(lora_px, nnu_px, alternative="two-sided")
+    print(f"\n-> Mann-Whitney U Test (Individual Hallucination Sizes, LoRA vs nnU-Net): p = {p_mwu:.4f}")
+
+if not df_crops.empty and "lora" in df_crops["Method"].values and "nnu" in df_crops["Method"].values:
+    c_lora = df_crops[df_crops["Method"] == "lora"].set_index("Image_ID")
+    c_nnu = df_crops[df_crops["Method"] == "nnu"].set_index("Image_ID").loc[c_lora.index]
+    _, p_tot_area = wilcoxon(c_lora["Total_Hall_Area_Px"], c_nnu["Total_Hall_Area_Px"])
+    print(f"-> Paired Wilcoxon (Total Hallucinated Area per Crop, N=50): "
+          f"LoRA Median = {c_lora['Total_Hall_Area_Px'].median():,.0f} px vs "
+          f"nnU-Net Median = {c_nnu['Total_Hall_Area_Px'].median():,.0f} px (p = {p_tot_area:.4f})")
+
+
+#---- 4. POST-PROCESSING SIZE-THRESHOLD SWEEP ---
+# this step make take several minuts.
+print("\n" + "=" * 75)
+print("2. SENSITIVITY ANALYSIS: SYMMETRIC SIZE-FILTERING POST-PROCESSING (KPMP)")
+print("=" * 75)
+
+thresholds = [0, 100, 250, 500, 1000, 1500, 2000, 3000, 5000]
+sweep_rows = []
+
+def eval_crop_at_threshold(gt_stack, pred_stack, min_px):
+    # Filter predictions by minimum pixel area
+    if pred_stack.shape[0] > 0:
+        areas = np.sum(pred_stack, axis=(1, 2))
+        pred_filtered = pred_stack[areas >= min_px]
+    else:
+        pred_filtered = pred_stack
+
+    n_gt, n_pred = gt_stack.shape[0], pred_filtered.shape[0]
+    if n_gt == 0 and n_pred == 0:
+        return 1.0, 0, 0
+    if n_pred == 0:
+        return 0.0, 0, 0
+    if n_gt == 0:
+        return 0.0, n_pred, 0
+
+    iou_mat = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            inter = np.logical_and(gt_stack[i], pred_filtered[j]).sum()
+            if inter > 0:
+                iou_mat[i, j] = inter / np.logical_or(gt_stack[i], pred_filtered[j]).sum()
+
+    max_iou_pred = np.max(iou_mat, axis=0)
+    tp = 0
+    matched = set()
+    for i in range(n_gt):
+        best_j = np.argmax(iou_mat[i])
+        if iou_mat[i, best_j] >= 0.5 and best_j not in matched:
+            tp += 1
+            matched.add(best_j)
+
+    fp = n_pred - tp
+    fn = n_gt - tp
+    f1 = (2.0 * tp) / (2.0 * tp + fp + fn) if (2.0 * tp + fp + fn) > 0 else 0.0
+    halls = int(np.sum(max_iou_pred < 0.01))
+    frags = int(fp - halls)
+    return f1, halls, frags
+
+for t in thresholds:
+    f1_lora, f1_nnu = [], []
+    h_lora, h_nnu = [], []
+    gt_lost_pct = 100.0 * np.mean(gt_sizes_px < t)
+
+    for gt_path in gt_files:
+        cid = gt_path.stem
+        gt_s = np.load(gt_path)
+        lora_s = np.load(BASE_DIR / "lora" / f"{cid}.npy")
+        nnu_s = np.load(BASE_DIR / "nnu" / f"{cid}.npy")
+
+        fl, hl, _ = eval_crop_at_threshold(gt_s, lora_s, t)
+        fn, hn, _ = eval_crop_at_threshold(gt_s, nnu_s, t)
+        f1_lora.append(fl); h_lora.append(hl)
+        f1_nnu.append(fn); h_nnu.append(hn)
+
+    _, p_f1 = wilcoxon(f1_lora, f1_nnu)
+    _, p_h = wilcoxon(h_lora, h_nnu)
+
+    sweep_rows.append({
+        "Min_Size_Px": t,
+        "GT_Tubules_Smaller(%)": round(gt_lost_pct, 1),
+        "LoRA_Halls": int(np.sum(h_lora)),
+        "nnU_Halls": int(np.sum(h_nnu)),
+        "p_Halls": round(p_h, 4),
+        "LoRA_Med_F1": round(np.median(f1_lora), 3),
+        "nnU_Med_F1": round(np.median(f1_nnu), 3),
+        "p_Inst_F1": round(p_f1, 4)
+    })
+
+df_sweep = pd.DataFrame(sweep_rows)
+print(df_sweep.to_string(index=False))
+
+# Save CSVs
+df_halls.to_csv(OUT_DIR / "kpmp_hallucination_sizes.csv", index=False)
+df_sweep.to_csv(OUT_DIR / "kpmp_size_threshold_sweep.csv", index=False)
+
+
+# --- 5. GENERATE 2-PANEL PUBLICATION FIGURE ---
+plt.rcParams.update({"font.family": "sans-serif", "font.size": 11, "pdf.fonttype": 42})
+fig, axes = plt.subplots(1, 2, figsize=(13, 5.5), dpi=300)
+
+palette = {"LoRA SAM-3": "#1f77b4", "nnU-Net": "#ff7f0e"}
+
+# Panel A: Boxplot + Stripplot of Hallucination Sizes (Log10 Pixel Area)
+ax1 = axes[0]
+sns.boxplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, width=0.45, showfliers=False, boxprops=dict(alpha=0.75)
+)
+sns.stripplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, size=4.5, jitter=0.2, alpha=0.6, linewidth=0.5, edgecolor="black"
+)
+gt_p5 = np.percentile(gt_sizes_px, 5)
+ax1.axhline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.5,
+            label=f"5th Percentile of Real GT Tubules ({gt_p5:,.0f} px)")
+ax1.set_yscale("log")
+ax1.set_title("A. Size Distribution of Pure Hallucinations", fontweight="bold")
+ax1.set_xlabel("")
+ax1.set_ylabel("Object Area in Pixels (Log Scale)")
+ax1.grid(axis="y", linestyle="--", alpha=0.5)
+ax1.legend(loc="upper right", fontsize=9.5)
+
+# Panel B: Effect of Size-Threshold Post-Processing on Instance F1 & Hallucinations
+ax2 = axes[1]
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["LoRA_Med_F1"], marker="o", linewidth=2,
+         color="#1f77b4", label="LoRA SAM-3 (Median Instance F1)")
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["nnU_Med_F1"], marker="s", linewidth=2,
+         color="#ff7f0e", label="nnU-Net (Median Instance F1)")
+ax2.axvline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.5,
+            label="5th Percentile of GT Tubules")
+ax2.set_title("B. Impact of Minimum-Size Filtering on Instance F1", fontweight="bold")
+ax2.set_xlabel("Post-Processing Minimum Area Threshold (Pixels)")
+ax2.set_ylabel("Median Instance-Level F1 (IoU >= 0.5)")
+ax2.set_ylim(0.65, 0.95)
+ax2.grid(True, linestyle="--", alpha=0.5)
+ax2.legend(loc="lower right", fontsize=9.5)
+
+plt.tight_layout()
+out_pdf = OUT_DIR / "figure_hallucination_size_analysis.pdf"
+fig.savefig(out_pdf, bbox_inches="tight")
+plt.close(fig)
+print(f"\n✅ Saved CSV tables and vector plot to:\n{out_pdf}")
+
+# %%% out
+
+'''
+    ===========================================================================
+    1. OBJECT-LEVEL HALLUCINATION SIZE DISTRIBUTION (KPMP, N=50 CROPS)
+    ===========================================================================
+    
+    LoRA SAM-3 Hallucinations (n = 165 objects):
+      Pixels : Median = 10,753 px (IQR: 7,421 – 18,242 px | 5th–95th: 4,020 – 51,069 px)
+      um^2   : Median = 682.9 um^2 (IQR: 471.3 – 1,158.4 um^2)
+    
+    nnU-Net Hallucinations (n = 269 objects):
+      Pixels : Median = 2,973 px (IQR: 577 – 8,793 px | 5th–95th: 135 – 23,621 px)
+      um^2   : Median = 188.8 um^2 (IQR: 36.6 – 558.4 um^2)
+    
+    Ground-Truth Real Tubules (n = 586 objects):
+      Pixels : Median = 36,737 px (IQR: 21,463 – 68,531 px | 5th–95th: 11,090 – 154,954 px)
+      um^2   : Median = 2,332.9 um^2 (IQR: 1,363.0 – 4,352.0 um^2)
+    
+    -> Mann-Whitney U Test (Individual Hallucination Sizes, LoRA vs nnU-Net): p = 0.0000
+    -> Paired Wilcoxon (Total Hallucinated Area per Crop, N=50): LoRA Median = 37,497 px vs nnU-Net Median = 19,644 px (p = 0.0010)
+    
+    ===========================================================================
+    2. SENSITIVITY ANALYSIS: SYMMETRIC SIZE-FILTERING POST-PROCESSING (KPMP)
+    ===========================================================================
+     Min_Size_Px  GT_Tubules_Smaller(%)  LoRA_Halls  nnU_Halls  p_Halls  LoRA_Med_F1  nnU_Med_F1  p_Inst_F1
+               0                    0.0         165        269   0.0000        0.852       0.735     0.0000
+             100                    0.0         165        269   0.0000        0.852       0.735     0.0000
+             250                    0.0         165        234   0.0073        0.852       0.768     0.0000
+             500                    0.0         165        208   0.0878        0.852       0.782     0.0004
+            1000                    0.0         165        186   0.4183        0.852       0.798     0.0032
+            1500                    0.0         165        165   0.8077        0.852       0.815     0.0285
+            2000                    0.0         164        162   0.6893        0.852       0.816     0.0525
+            3000                    0.0         160        134   0.0359        0.857       0.824     0.4495
+            5000                    0.0         146        104   0.0028        0.861       0.857     0.7498
+    
+    ✅ Saved CSV tables and vector plot to:
+    F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics\figure_hallucination_size_analysis.pdf
+'''
+
+# %%% edit figure
+
+# combining the previous figure-7 with these 2 figures  =>  a 3-panel figure.
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+from scipy.stats import mannwhitneyu, wilcoxon
+import warnings
+warnings.filterwarnings("ignore")
+
+# --- 1. AUTO-LOCATE THE KPMP .NPY DIRECTORY ---
+DL_ROOT = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl")
+MANUSCRIPT_ROOT = DL_ROOT / "manuscript"
+OUT_DIR = MANUSCRIPT_ROOT / "metrics" / "hallucination_sizes"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+candidate_dirs = [
+    MANUSCRIPT_ROOT / "single_output" / "kpmp",
+    MANUSCRIPT_ROOT / "sinlge_output" / "kpmp",
+]
+
+BASE_DIR = None
+for cand in candidate_dirs:
+    if (cand / "gt").exists() and len(list((cand / "gt").glob("*.npy"))) > 0:
+        BASE_DIR = cand
+        break
+
+if BASE_DIR is None:
+    for gt_cand in DL_ROOT.rglob("kpmp/gt"):
+        if gt_cand.is_dir() and len(list(gt_cand.glob("*.npy"))) >= 10:
+            BASE_DIR = gt_cand.parent
+            break
+
+GT_DIR = BASE_DIR / "gt"
+gt_files = sorted(list(GT_DIR.glob("*.npy")))
+print(f"Found {len(gt_files)} KPMP GT .npy files in: {BASE_DIR}")
+
+MPP = 0.252
+PX_TO_UM2 = MPP ** 2
+
+# --- 2. EXTRACT ERROR COUNTS, HALLUCINATION SIZES & GT SIZES ---
+hall_records = []
+gt_sizes_px = []
+totals = {"lora": {"Fragments": 0, "Hallucinations": 0},
+          "nnu":  {"Fragments": 0, "Hallucinations": 0}}
+
+for gt_path in gt_files:
+    case_id = gt_path.stem
+    gt_stack = np.load(gt_path)
+    n_gt = gt_stack.shape[0]
+
+    for i in range(n_gt):
+        gt_sizes_px.append(int(np.sum(gt_stack[i])))
+
+    for method, method_label in [("lora", "LoRA SAM-3"), ("nnu", "nnU-Net")]:
+        pred_stack = np.load(BASE_DIR / method / f"{case_id}.npy")
+        n_pred = pred_stack.shape[0]
+        if n_pred == 0:
+            continue
+
+        iou_matrix = np.zeros((n_gt, n_pred))
+        for i in range(n_gt):
+            for j in range(n_pred):
+                inter = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+                if inter > 0:
+                    iou_matrix[i, j] = inter / np.logical_or(gt_stack[i], pred_stack[j]).sum()
+
+        max_iou_per_pred = np.max(iou_matrix, axis=0) if n_gt > 0 else np.zeros(n_pred)
+
+        matched_preds = set()
+        for i in range(n_gt):
+            best_j = np.argmax(iou_matrix[i])
+            if iou_matrix[i, best_j] >= 0.5 and best_j not in matched_preds:
+                matched_preds.add(best_j)
+
+        for j in range(n_pred):
+            if j in matched_preds:
+                continue
+            area_px = int(np.sum(pred_stack[j]))
+            if max_iou_per_pred[j] < 0.01:
+                totals[method]["Hallucinations"] += 1
+                hall_records.append({
+                    "Image_ID": case_id,
+                    "Method": method,
+                    "Method_Display": method_label,
+                    "Area_Pixels": area_px,
+                    "Area_um2": area_px * PX_TO_UM2
+                })
+            else:
+                totals[method]["Fragments"] += 1
+
+df_halls = pd.DataFrame(hall_records)
+gt_sizes_px = np.array(gt_sizes_px)
+gt_p5 = np.percentile(gt_sizes_px, 5)
+
+# --- 3. POST-PROCESSING THRESHOLD SWEEP (EXTENDED PAST 5TH PERCENTILE OF GT) ---
+thresholds = [100, 250, 500, 1000, 1500, 2000, 3000, 5000, 7500, 10000, 12500, 15000]
+sweep_rows = []
+
+def eval_crop_at_threshold(gt_stack, pred_stack, min_px):
+    if pred_stack.shape[0] > 0:
+        areas = np.sum(pred_stack, axis=(1, 2))
+        pred_filtered = pred_stack[areas >= min_px]
+    else:
+        pred_filtered = pred_stack
+
+    n_gt, n_pred = gt_stack.shape[0], pred_filtered.shape[0]
+    if n_gt == 0 and n_pred == 0:
+        return 1.0, 0
+    if n_pred == 0:
+        return 0.0, 0
+    if n_gt == 0:
+        return 0.0, n_pred
+
+    iou_mat = np.zeros((n_gt, n_pred))
+    for i in range(n_gt):
+        for j in range(n_pred):
+            inter = np.logical_and(gt_stack[i], pred_filtered[j]).sum()
+            if inter > 0:
+                iou_mat[i, j] = inter / np.logical_or(gt_stack[i], pred_filtered[j]).sum()
+
+    max_iou_pred = np.max(iou_mat, axis=0)
+    tp = 0
+    matched = set()
+    for i in range(n_gt):
+        best_j = np.argmax(iou_mat[i])
+        if iou_mat[i, best_j] >= 0.5 and best_j not in matched:
+            tp += 1
+            matched.add(best_j)
+
+    fp = n_pred - tp
+    fn = n_gt - tp
+    f1 = (2.0 * tp) / (2.0 * tp + fp + fn) if (2.0 * tp + fp + fn) > 0 else 0.0
+    halls = int(np.sum(max_iou_pred < 0.01))
+    return f1, halls
+
+for t in thresholds:
+    f1_lora, f1_nnu = [], []
+    h_lora, h_nnu = [], []
+    gt_lost_pct = 100.0 * np.mean(gt_sizes_px < t)
+
+    for gt_path in gt_files:
+        cid = gt_path.stem
+        gt_s = np.load(gt_path)
+        lora_s = np.load(BASE_DIR / "lora" / f"{cid}.npy")
+        nnu_s = np.load(BASE_DIR / "nnu" / f"{cid}.npy")
+
+        fl, hl = eval_crop_at_threshold(gt_s, lora_s, t)
+        fn, hn = eval_crop_at_threshold(gt_s, nnu_s, t)
+        f1_lora.append(fl); h_lora.append(hl)
+        f1_nnu.append(fn); h_nnu.append(hn)
+
+    _, p_f1 = wilcoxon(f1_lora, f1_nnu)
+    sweep_rows.append({
+        "Min_Size_Px": t,
+        "GT_Tubules_Smaller(%)": round(gt_lost_pct, 1),
+        "LoRA_Halls": int(np.sum(h_lora)),
+        "nnU_Halls": int(np.sum(h_nnu)),
+        "LoRA_Med_F1": round(np.median(f1_lora), 3),
+        "nnU_Med_F1": round(np.median(f1_nnu), 3),
+        "p_Inst_F1": round(p_f1, 4)
+    })
+
+df_sweep = pd.DataFrame(sweep_rows)
+print("\n--- EXTENDED THRESHOLD SWEEP ---")
+print(df_sweep.to_string(index=False))
+df_sweep.to_csv(OUT_DIR / "kpmp_size_threshold_sweep.csv", index=False)
+
+# --- 4. PLOT UNIFIED 3-PANEL FIGURE 7 ---
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.size": 11,
+    "axes.labelsize": 12,
+    "axes.titlesize": 12.5,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42
+})
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5.5), dpi=300)
+
+# --- PANEL A: Stacked Bar Chart of Error Types ---
+ax0 = axes[0]
+methods_labels = ["LoRA SAM-3", "nnU-Net"]
+frags = [totals["lora"]["Fragments"], totals["nnu"]["Fragments"]]
+halls = [totals["lora"]["Hallucinations"], totals["nnu"]["Hallucinations"]]
+
+bar_w = 0.48
+b1 = ax0.bar(methods_labels, frags, bar_w, label="Partial Overlap (Fragmentation)",
+             color="#4c72b0", edgecolor="black", alpha=0.85)
+b2 = ax0.bar(methods_labels, halls, bar_w, bottom=frags, label="Zero Overlap (Hallucinations)",
+             color="#d62728", edgecolor="black", alpha=0.85)
+
+# Add value labels inside bars
+for i in range(2):
+    ax0.text(i, frags[i] / 2, f"{frags[i]}", ha="center", va="center",
+             color="white", fontweight="bold", fontsize=11)
+    ax0.text(i, frags[i] + halls[i] / 2, f"{halls[i]}", ha="center", va="center",
+             color="white", fontweight="bold", fontsize=11)
+
+ax0.set_title("A. False-Positive Error Decomposition", fontweight="bold")
+ax0.set_ylabel("Total False-Positive Instances (KPMP, N=50)")
+ax0.set_ylim(0, 345)
+ax0.grid(axis="y", linestyle="--", alpha=0.5)
+ax0.legend(loc="upper left", fontsize=9.5, framealpha=0.9)
+
+# --- PANEL B: Size Distribution of Pure Hallucinations ---
+ax1 = axes[1]
+palette = {"LoRA SAM-3": "#1f77b4", "nnU-Net": "#ff7f0e"}
+sns.boxplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, width=0.45, showfliers=False, boxprops=dict(alpha=0.75)
+)
+sns.stripplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, size=4.5, jitter=0.2, alpha=0.6, linewidth=0.5, edgecolor="black"
+)
+ax1.axhline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.6,
+            label=f"5th Percentile of GT Tubules ({gt_p5:,.0f} px)")
+ax1.set_yscale("log")
+ax1.set_title("B. Size Distribution of Pure Hallucinations", fontweight="bold")
+ax1.set_xlabel("")
+ax1.set_ylabel("Object Area in Pixels (Log10 Scale)")
+ax1.grid(axis="y", linestyle="--", alpha=0.5)
+ax1.legend(loc="lower left", fontsize=9.5, framealpha=0.9)
+
+# --- PANEL C: Post-Processing Size-Threshold Sweep ---
+ax2 = axes[2]
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["LoRA_Med_F1"], marker="o", linewidth=2.2,
+         color="#1f77b4", label="LoRA SAM-3 (Median Instance F1)")
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["nnU-Net_Med_F1"] if "nnU-Net_Med_F1" in df_sweep else df_sweep["nnU_Med_F1"],
+         marker="s", linewidth=2.2, color="#ff7f0e", label="nnU-Net (Median Instance F1)")
+ax2.axvline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.6,
+            label=f"5th Percentile of GT ({gt_p5:,.0f} px)")
+ax2.set_title("C. Effect of Size Filtering on Instance F1", fontweight="bold")
+ax2.set_xlabel("Minimum Object Area Threshold (Pixels)")
+ax2.set_ylabel("Median Instance-Level F1 (IoU >= 0.5)")
+ax2.set_ylim(0.70, 0.90)
+ax2.grid(True, linestyle="--", alpha=0.5)
+ax2.legend(loc="lower right", fontsize=9.5, framealpha=0.9)
+
+plt.tight_layout()
+out_pdf = OUT_DIR / "Figure_7_three_panel.pdf"
+fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.15)
+plt.close(fig)
+print(f"\n✅ Saved unified 3-panel Figure 7 to:\n{out_pdf}")
+
+
+
+
+# %%%% out
+
+'''
+    Found 50 KPMP GT .npy files in: F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp
+    
+    --- EXTENDED THRESHOLD SWEEP ---
+     Min_Size_Px  GT_Tubules_Smaller(%)  LoRA_Halls  nnU_Halls  LoRA_Med_F1  nnU_Med_F1  p_Inst_F1
+             100                    0.0         165        269        0.852       0.735     0.0000
+             250                    0.0         165        234        0.852       0.768     0.0000
+             500                    0.0         165        208        0.852       0.782     0.0004
+            1000                    0.0         165        186        0.852       0.798     0.0032
+            1500                    0.0         165        165        0.852       0.815     0.0285
+            2000                    0.0         164        162        0.852       0.816     0.0525
+            3000                    0.0         160        134        0.857       0.824     0.4495
+            5000                    0.0         146        104        0.861       0.857     0.7498
+            7500                    0.9         121         78        0.887       0.872     0.4456
+           10000                    2.7          95         53        0.893       0.880     0.2798
+           12500                    6.7          72         42        0.861       0.880     0.6088
+           15000                   11.1          56         29        0.875       0.870     0.7805
+    
+    ✅ Saved unified 3-panel Figure 7 to:
+    F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics\Figure_7_three_panel.pdf
+'''
+
+# %%% over dataframes 
+
+# this doesn't take long, as it plots panel-C from the saved :
+    # prev__kpmp_size_threshold_sweep.csv
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import seaborn as sns
+from pathlib import Path
+
+# --- 1. DIRECTORIES & FILE PATHS ---
+BASE_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\single_output\kpmp")
+GT_DIR = BASE_DIR / "gt"
+
+HALL_DIR = Path(r"F:\OneDrive - Uniklinik RWTH Aachen\dl\manuscript\metrics\hallucination_sizes")
+HALL_DIR.mkdir(parents=True, exist_ok=True)
+
+SWEEP_CSV = HALL_DIR / "kpmp_size_threshold_sweep.csv"
+HALLS_CSV = HALL_DIR / "kpmp_hallucination_sizes.csv"
+
+# --- 2. LOAD SWEEP CSV & HALLUCINATION DATA ---
+df_sweep = pd.read_csv(SWEEP_CSV)
+print(f"✅ Loaded threshold sweep table from:\n   {SWEEP_CSV}")
+
+# Calculate 5th percentile of real GT tubules and load/compute individual hallucination sizes
+gt_files = sorted(list(GT_DIR.glob("*.npy")))
+gt_sizes_px = []
+totals = {"lora": {"Fragments": 0, "Hallucinations": 0},
+          "nnu":  {"Fragments": 0, "Hallucinations": 0}}
+hall_records = []
+
+for gt_path in gt_files:
+    case_id = gt_path.stem
+    gt_stack = np.load(gt_path)
+    n_gt = gt_stack.shape[0]
+
+    for i in range(n_gt):
+        gt_sizes_px.append(int(np.sum(gt_stack[i])))
+
+    for method, method_label in [("lora", "LoRA SAM-3"), ("nnu", "nnU-Net")]:
+        pred_stack = np.load(BASE_DIR / method / f"{case_id}.npy")
+        n_pred = pred_stack.shape[0]
+        if n_pred == 0:
+            continue
+
+        iou_matrix = np.zeros((n_gt, n_pred))
+        for i in range(n_gt):
+            for j in range(n_pred):
+                inter = np.logical_and(gt_stack[i], pred_stack[j]).sum()
+                if inter > 0:
+                    iou_matrix[i, j] = inter / np.logical_or(gt_stack[i], pred_stack[j]).sum()
+
+        max_iou_per_pred = np.max(iou_matrix, axis=0) if n_gt > 0 else np.zeros(n_pred)
+
+        matched_preds = set()
+        for i in range(n_gt):
+            best_j = np.argmax(iou_matrix[i])
+            if iou_matrix[i, best_j] >= 0.5 and best_j not in matched_preds:
+                matched_preds.add(best_j)
+
+        for j in range(n_pred):
+            if j in matched_preds:
+                continue
+            area_px = int(np.sum(pred_stack[j]))
+            if max_iou_per_pred[j] < 0.01:
+                totals[method]["Hallucinations"] += 1
+                hall_records.append({
+                    "Image_ID": case_id,
+                    "Method": method,
+                    "Method_Display": method_label,
+                    "Area_Pixels": area_px
+                })
+            else:
+                totals[method]["Fragments"] += 1
+
+df_halls = pd.DataFrame(hall_records)
+gt_sizes_px = np.array(gt_sizes_px)
+gt_p5 = np.percentile(gt_sizes_px, 5)  # 11,090 px
+
+# --- 3. GENERATE 2-ROW COMPOSITE FIGURE 7 (A & B TOP, WIDE C BOTTOM) ---
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.size": 11,
+    "axes.labelsize": 12,
+    "axes.titlesize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42
+})
+
+fig = plt.figure(figsize=(14, 14)) # , dpi=300
+gs = gridspec.GridSpec(2, 2, 
+                       height_ratios=[1.05, 0.95], 
+                       hspace=0.15, 
+                       wspace=0.15)
+
+# --- PANEL A (Top-Left): Stacked Bar Chart of Error Types ---
+ax0 = fig.add_subplot(gs[0, 0])
+methods_labels = ["LoRA SAM-3", "nnU-Net"]
+frags = [totals["lora"]["Fragments"], totals["nnu"]["Fragments"]]
+halls = [totals["lora"]["Hallucinations"], totals["nnu"]["Hallucinations"]]
+
+bar_w = 0.45
+ax0.bar(methods_labels, frags, bar_w, label="Partial Overlap (Fragmentation)",
+        color="#4c72b0", edgecolor="black", alpha=0.85)
+ax0.bar(methods_labels, halls, bar_w, bottom=frags, label="Zero Overlap (Hallucinations)",
+        color="#d62728", edgecolor="black", alpha=0.85)
+
+for i in range(2):
+    ax0.text(i, frags[i] / 2, f"{frags[i]}", ha="center", va="center",
+             color="white", fontweight="bold", fontsize=11)
+    ax0.text(i, frags[i] + halls[i] / 2, f"{halls[i]}", ha="center", va="center",
+             color="white", fontweight="bold", fontsize=11)
+
+ax0.set_title("A. False-Positive Error Decomposition", fontweight="bold")
+ax0.set_ylabel("Total False-Positive Instances (KPMP, N=50)")
+ax0.set_ylim(0, 345)
+ax0.grid(axis="y", linestyle="--", alpha=0.5)
+ax0.legend(loc="upper left", fontsize=10, framealpha=0.9)
+
+# --- PANEL B (Top-Right): Size Distribution of Pure Hallucinations ---
+ax1 = fig.add_subplot(gs[0, 1])
+palette = {"LoRA SAM-3": "#1f77b4", "nnU-Net": "#ff7f0e"}
+sns.boxplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, width=0.45, showfliers=False, boxprops=dict(alpha=0.75)
+)
+sns.stripplot(
+    data=df_halls, x="Method_Display", y="Area_Pixels", palette=palette,
+    ax=ax1, size=4.5, jitter=0.2, alpha=0.6, linewidth=0.5, edgecolor="black"
+)
+ax1.axhline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.8,
+            label=f"5th Percentile of Real GT Tubules ({gt_p5:,.0f} px)")
+ax1.set_yscale("log")
+ax1.set_title("B. Size Distribution of Pure Hallucinations", fontweight="bold")
+ax1.set_xlabel("")
+ax1.set_ylabel("Object Area in Pixels (Log10 Scale)")
+ax1.grid(axis="y", linestyle="--", alpha=0.5)
+ax1.legend(loc="lower left", fontsize=10, framealpha=0.9)
+
+# --- PANEL C (Bottom Full-Width): Post-Processing Size-Threshold Sweep ---
+ax2 = fig.add_subplot(gs[1, :])
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["LoRA_Med_F1"], marker="o", markersize=6,
+         linewidth=2.4, color="#1f77b4", label="LoRA SAM-3 (Median Instance F1)")
+ax2.plot(df_sweep["Min_Size_Px"], df_sweep["nnU_Med_F1"], marker="s", markersize=6,
+         linewidth=2.4, color="#ff7f0e", label="nnU-Net (Median Instance F1)")
+ax2.axvline(gt_p5, color="darkgreen", linestyle="--", linewidth=1.8,
+            label=f"5th Percentile of Real GT Tubules ({gt_p5:,.0f} px)")
+
+ax2.set_title("C. Impact of Symmetric Minimum-Area Post-Processing on Instance-Level F1", fontweight="bold")
+ax2.set_xlabel("Post-Processing Minimum Object Area Threshold (Pixels)")
+ax2.set_ylabel("Median Instance-Level F1 (IoU >= 0.5)")
+ax2.set_xlim(-200, max(df_sweep["Min_Size_Px"]) + 500)
+ax2.set_ylim(0.70, 0.90)
+ax2.set_xticks(np.arange(0, max(df_sweep["Min_Size_Px"]) + 1, 1000))
+ax2.grid(True, linestyle="--", alpha=0.5)
+ax2.legend(loc="lower right", fontsize=10.5, framealpha=0.9)
+
+out_pdf = HALL_DIR / "Figure_7_three_panel.pdf"
+fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.15)
+plt.close(fig)
+print(f"\n✅ Saved 2-row Figure 7 to:\n   {out_pdf}")
+
+# %%
 
 
 
