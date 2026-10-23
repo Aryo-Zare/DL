@@ -2671,10 +2671,10 @@ frags = [totals["lora"]["Fragments"], totals["nnu"]["Fragments"]]
 halls = [totals["lora"]["Hallucinations"], totals["nnu"]["Hallucinations"]]
 
 bar_w = 0.45
-ax0.bar(methods_labels, frags, bar_w, label="Partial Overlap (Fragmentation)",
-        color="#4c72b0", edgecolor="black", alpha=0.85)
 ax0.bar(methods_labels, halls, bar_w, bottom=frags, label="Zero Overlap (Hallucinations)",
         color="#d62728", edgecolor="black", alpha=0.85)
+ax0.bar(methods_labels, frags, bar_w, label="Partial Overlap (Fragmentation / Low-IoU)",
+        color="#4c72b0", edgecolor="black", alpha=0.85)
 
 for i in range(2):
     ax0.text(i, frags[i] / 2, f"{frags[i]}", ha="center", va="center",
@@ -2727,7 +2727,9 @@ ax2.grid(True, linestyle="--", alpha=0.5)
 ax2.legend(loc="lower right", fontsize=10.5, framealpha=0.9)
 
 out_pdf = HALL_DIR / "Figure_7_three_panel.pdf"
+out_svg = HALL_DIR / "Figure_7_three_panel.svg"
 fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.15)
+fig.savefig(out_svg, bbox_inches="tight", pad_inches=0.15)
 plt.close(fig)
 print(f"\n✅ Saved 2-row Figure 7 to:\n   {out_pdf}")
 
